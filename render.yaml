@@ -1,0 +1,54 @@
+# Render Blueprint — deploys the email-service web service. Use MongoDB Atlas
+# for the database (Render's free tier has no managed Mongo).
+#
+# One-click: push this repo, then in Render: New > Blueprint, pick this repo.
+# You'll be prompted for MONGODB_URI and the SES/Brevo SMTP secrets.
+#
+# NOTE: on the free plan the instance sleeps after ~15 min idle, which pauses
+# the in-process send worker until the next request wakes it. Fine at hobby
+# scale; upgrade the plan (or split the worker into a Cron Job) if you need
+# guaranteed prompt sends during quiet periods.
+services:
+  - type: web
+    name: email-service
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - src/**
+        - package.json
+        - package-lock.json
+        - tsconfig.json
+        - render.yaml
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Paste your MongoDB Atlas connection string when prompted.
+      - key: MONGODB_URI
+        sync: false
+      - key: CLIENT_ORIGIN
+        value: "*"
+      # SES SMTP (primary). Host is region-specific; user/pass are IAM SMTP creds.
+      - key: SES_SMTP_HOST
+        value: email-smtp.us-east-1.amazonaws.com
+      - key: SES_SMTP_PORT
+        value: "587"
+      - key: SES_SMTP_USER
+        sync: false
+      - key: SES_SMTP_PASS
+        sync: false
+      # Brevo SMTP (failover). Optional — leave blank to run SES-only.
+      - key: BREVO_SMTP_HOST
+        value: smtp-relay.brevo.com
+      - key: BREVO_SMTP_PORT
+        value: "587"
+      - key: BREVO_SMTP_USER
+        sync: false
+      - key: BREVO_SMTP_PASS
+        sync: false
