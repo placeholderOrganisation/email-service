@@ -14,7 +14,10 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: npm ci && npm run build
+    # --include=dev is required because NODE_ENV=production (below) otherwise makes
+    # npm skip devDependencies — but the build needs typescript + @types/node.
+    # Runtime (npm start) only uses compiled dist/ + production deps.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /health
     buildFilter:
