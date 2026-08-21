@@ -23,6 +23,7 @@ services:
     buildFilter:
       paths:
         - src/**
+        - public/**
         - package.json
         - package-lock.json
         - tsconfig.json
@@ -37,6 +38,10 @@ services:
         sync: false
       - key: CLIENT_ORIGIN
         value: "*"
+      # Shared secret to unlock the /admin dashboard. Set this to a long random
+      # value and keep it private — anyone with it can read all send history.
+      - key: ADMIN_TOKEN
+        sync: false
       # SES SMTP (primary). Host is region-specific; user/pass are IAM SMTP creds.
       - key: SES_SMTP_HOST
         value: email-smtp.us-east-1.amazonaws.com

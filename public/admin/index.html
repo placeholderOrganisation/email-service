@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>email-service admin</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0b0d12; --panel: #14171f; --border: #262b36; --text: #e6e9ef;
+    --muted: #8b93a3; --accent: #6c8cff; --danger: #ff6b6b; --ok: #4ade80; --warn: #fbbf24;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f5f6f8; --panel: #ffffff; --border: #e2e5ea; --text: #1a1d24; --muted: #6b7280; }
+  }
+  * { box-sizing: border-box; }
+  /* The hidden attribute must win over component display rules (e.g. .gate
+     sets display:flex, which otherwise keeps the login box on screen after
+     auth). This one line is what makes show/hide actually work. */
+  [hidden] { display: none !important; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 20px;
+           border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; flex: 1; }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  header .dot.ok { background: var(--ok); }
+  header .dot.bad { background: var(--danger); }
+  button, select, input[type=text], input[type=email], input[type=password], textarea {
+    font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px;
+  }
+  textarea { width: 100%; resize: vertical; min-height: 160px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  input[type=text], input[type=email], input[type=password], select { width: 100%; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button.danger:hover { background: var(--danger); color: #fff; }
+  button.sm { padding: 3px 8px; font-size: 12px; }
+  a { color: var(--accent); }
+  .layout { display: grid; grid-template-columns: 240px 300px 1fr; height: calc(100vh - 49px); }
+  .col { border-right: 1px solid var(--border); overflow-y: auto; padding: 10px; }
+  .col:last-child { border-right: none; }
+  .item { padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; }
+  .item:hover { background: var(--panel); }
+  .item.active { background: var(--accent); color: #fff; }
+  .item .sub { font-size: 12px; color: var(--muted); }
+  .item.active .sub { color: #dde4ff; }
+  .col-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .col-head .title { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  tr.row { cursor: pointer; }
+  tr.row:hover { background: var(--panel); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .badge.sent { background: rgba(74,222,128,.15); color: var(--ok); }
+  .badge.failed { background: rgba(255,107,107,.15); color: var(--danger); }
+  .badge.queued, .badge.processing { background: rgba(251,191,36,.15); color: var(--warn); }
+  .badge.on { background: rgba(74,222,128,.15); color: var(--ok); }
+  .badge.off { background: rgba(139,147,163,.2); color: var(--muted); }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); padding: 20px; text-align: center; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .card h3 { margin: 0 0 4px; font-size: 14px; }
+  .card .row-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .tmpl-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; }
+  .tmpl-row:hover { background: var(--panel); }
+  .tmpl-row .grow { flex: 1; cursor: pointer; min-width: 0; }
+  .tmpl-row .grow .sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gate { display: flex; align-items: center; justify-content: center; height: 100vh; }
+  .gate form { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+               padding: 28px; width: 320px; display: flex; flex-direction: column; gap: 10px; }
+  .gate h2 { margin: 0 0 4px; font-size: 16px; }
+  .gate .err { color: var(--danger); font-size: 13px; min-height: 18px; }
+  pre { white-space: pre-wrap; word-break: break-word; background: var(--panel);
+        border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 12px; }
+  .detail dl { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; margin: 0 0 16px; }
+  .detail dt { color: var(--muted); }
+  .detail dt, .detail dd { margin: 0; font-size: 13px; word-break: break-word; }
+  code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  /* Modal */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex;
+             align-items: center; justify-content: center; padding: 20px; z-index: 50; }
+  .modal { background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+           width: 520px; max-width: 100%; max-height: 90vh; overflow-y: auto; padding: 20px; }
+  .modal h2 { margin: 0 0 14px; font-size: 16px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; margin-bottom: 4px; font-weight: 600; font-size: 13px; }
+  .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .modal .err { color: var(--danger); font-size: 13px; min-height: 18px; margin-top: 4px; }
+  .keybox { display: flex; gap: 8px; align-items: center; }
+  .keybox code { flex: 1; overflow-x: auto; white-space: nowrap; padding: 8px; }
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate" hidden>
+  <form id="gate-form">
+    <h2>email-service admin</h2>
+    <p class="muted" style="margin:0 0 6px">Enter the admin token (set as <code>ADMIN_TOKEN</code> on the server).</p>
+    <input id="token-input" type="password" placeholder="Admin token" autofocus />
+    <button class="primary" type="submit">Unlock</button>
+    <div class="err" id="gate-err"></div>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <span class="dot" id="health-dot"></span>
+    <h1>email-service admin</h1>
+    <button id="refresh-btn">Refresh</button>
+    <button id="logout-btn">Lock</button>
+  </header>
+  <div class="layout">
+    <div class="col" id="projects-col"></div>
+    <div class="col" id="mid-col"></div>
+    <div class="col" id="detail-col"></div>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+
+<script>
+(function () {
+  const $ = (sel, elm) => (elm || document).querySelector(sel);
+  const el = (tag, attrs, ...kids) => {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null) continue;
+      if (k === "text") n.textContent = v;
+      else if (k === "html") n.innerHTML = v;
+      else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+      else n.setAttribute(k, v);
+    }
+    kids.flat().forEach((k) => k != null && n.append(k));
+    return n;
+  };
+  const fmtDate = (d) => (d ? new Date(d).toLocaleString() : "—");
+
+  const state = { token: localStorage.getItem("es_admin_token") || "", projectId: null, section: "emails", data: null };
+
+  async function api(path, opts) {
+    opts = opts || {};
+    const headers = { "X-Admin-Token": state.token };
+    if (opts.body) headers["Content-Type"] = "application/json";
+    const res = await fetch(path, {
+      method: opts.method || "GET",
+      cache: "no-store",
+      headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    if (res.status === 401) { unlock(false); throw new Error("Unauthorized"); }
+    if (res.status === 204) return null;
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || res.statusText);
+    return json;
+  }
+
+  function unlock(ok) { $("#gate").hidden = ok; $("#app").hidden = !ok; }
+
+  // ---------- Modal form ----------
+  // Each modal owns its overlay node and removes only itself, so a follow-up
+  // modal (e.g. the API-key dialog after "create project") can stack without the
+  // form's close wiping it out.
+  function closeModal() { $("#modal-root").replaceChildren(); }
+
+  // fields: [{ key, label, type, options, value, required, help, disabled }]
+  function openForm({ title, fields, submitLabel, onSubmit }) {
+    const inputs = {};
+    const form = el("form");
+    for (const f of fields) {
+      let input;
+      if (f.type === "textarea") input = el("textarea", { id: "f_" + f.key });
+      else if (f.type === "select")
+        input = el("select", { id: "f_" + f.key }, ...f.options.map((o) => el("option", { value: o }, o)));
+      else if (f.type === "checkbox") input = el("input", { type: "checkbox", id: "f_" + f.key });
+      else input = el("input", { type: f.type || "text", id: "f_" + f.key });
+      if (f.type === "checkbox") input.checked = Boolean(f.value);
+      else if (f.value != null) input.value = f.value;
+      if (f.disabled) input.disabled = true;
+      inputs[f.key] = input;
+      form.append(
+        el("div", { class: "field" },
+          el("label", { for: "f_" + f.key, text: f.label }),
+          input,
+          f.help ? el("div", { class: "muted", style: "font-size:12px;margin-top:2px", text: f.help }) : null,
+        ),
+      );
+    }
+    const err = el("div", { class: "err" });
+    const submitBtn = el("button", { class: "primary", type: "submit", text: submitLabel || "Save" });
+    const ov = el("div", { class: "overlay", onclick: (e) => e.target === ov && ov.remove() },
+      el("div", { class: "modal" }, el("h2", { text: title }), form));
+    form.append(err, el("div", { class: "actions" },
+      el("button", { type: "button", text: "Cancel", onclick: () => ov.remove() }), submitBtn));
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const values = {};
+      for (const f of fields) values[f.key] = f.type === "checkbox" ? inputs[f.key].checked : inputs[f.key].value;
+      err.textContent = "";
+      submitBtn.disabled = true;
+      try { await onSubmit(values); ov.remove(); }
+      catch (ex) { err.textContent = ex.message || "Something went wrong"; submitBtn.disabled = false; }
+    });
+
+    $("#modal-root").append(ov);
+    const first = form.querySelector("input, textarea, select");
+    if (first) first.focus();
+  }
+
+  function showKey(title, plaintext) {
+    const ov = el("div", { class: "overlay" },
+      el("div", { class: "modal" },
+        el("h2", { text: title }),
+        el("p", { class: "muted", text: "Copy this now — it is shown only once and cannot be retrieved later." }),
+        el("div", { class: "keybox" }, el("code", { text: plaintext }),
+          el("button", { text: "Copy", onclick: () => navigator.clipboard.writeText(plaintext) })),
+        el("div", { class: "actions" }, el("button", { class: "primary", text: "Done", onclick: () => ov.remove() }))));
+    $("#modal-root").append(ov);
+  }
+
+  // ---------- Gate ----------
+  $("#gate-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const val = $("#token-input").value.trim();
+    if (!val) return;
+    state.token = val;
+    try {
+      await api("/admin/api/projects");
+      localStorage.setItem("es_admin_token", val);
+      unlock(true); loadProjects(); checkHealth();
+    } catch { $("#gate-err").textContent = "Invalid token."; }
+  });
+  $("#logout-btn").addEventListener("click", () => {
+    localStorage.removeItem("es_admin_token"); state.token = ""; unlock(false);
+  });
+  $("#refresh-btn").addEventListener("click", () => {
+    loadProjects(); if (state.projectId) selectProject(state.projectId); checkHealth();
+  });
+
+  async function checkHealth() {
+    const dot = $("#health-dot");
+    try {
+      const body = await (await fetch("/health", { cache: "no-store" })).json();
+      dot.className = "dot " + (body.ok ? "ok" : "bad");
+      dot.title = body.ok ? "DB connected" : "DB disconnected";
+    } catch { dot.className = "dot bad"; dot.title = "unreachable"; }
+  }
+
+  // ---------- Projects column ----------
+  async function loadProjects() {
+    const col = $("#projects-col");
+    col.replaceChildren(
+      el("div", { class: "col-head" },
+        el("span", { class: "title", text: "Projects" }),
+        el("button", { class: "sm primary", text: "+ New", onclick: newProject })));
+    let projects;
+    try { projects = await api("/admin/api/projects"); } catch { return; }
+    if (!projects.length) { col.append(el("div", { class: "empty", text: "No projects yet." })); return; }
+    for (const p of projects) {
+      col.append(el("div",
+        { class: "item" + (p._id === state.projectId ? " active" : ""), onclick: () => selectProject(p._id) },
+        el("div", { text: p.name }),
+        el("div", { class: "sub", text: p.fromAddress + (p.active ? "" : " · inactive") })));
+    }
+  }
+
+  function newProject() {
+    openForm({
+      title: "New project",
+      fields: [
+        { key: "name", label: "Name", required: true },
+        { key: "fromAddress", label: "From address", type: "email", help: "Must be on a domain verified in SES." },
+        { key: "fromName", label: "From name (optional)" },
+      ],
+      submitLabel: "Create",
+      onSubmit: async (v) => {
+        const res = await api("/admin/api/projects", { method: "POST", body: v });
+        await loadProjects();
+        await selectProject(res.project._id);
+        showKey("API key for " + res.project.name, res.apiKey);
+      },
+    });
+  }
+
+  function editProject(p) {
+    openForm({
+      title: "Edit project",
+      fields: [
+        { key: "name", label: "Name", value: p.name },
+        { key: "fromAddress", label: "From address", type: "email", value: p.fromAddress },
+        { key: "fromName", label: "From name", value: p.fromName || "" },
+        { key: "active", label: "Active", type: "checkbox", value: p.active },
+      ],
+      submitLabel: "Save",
+      onSubmit: async (v) => {
+        await api("/admin/api/projects/" + p._id, { method: "PATCH", body: v });
+        await loadProjects(); await selectProject(p._id);
+      },
+    });
+  }
+
+  async function rotateKey(p) {
+    if (!confirm(`Rotate the API key for "${p.name}"? The current key stops working immediately.`)) return;
+    const res = await api("/admin/api/projects/" + p._id + "/rotate-key", { method: "POST", body: {} });
+    showKey("New API key for " + p.name, res.apiKey);
+  }
+
+  async function deleteProject(p) {
+    if (!confirm(`Delete "${p.name}" and ALL its templates, forms and send history? This cannot be undone.`)) return;
+    await api("/admin/api/projects/" + p._id, { method: "DELETE" });
+    state.projectId = null; state.data = null;
+    $("#mid-col").replaceChildren(el("div", { class: "empty", text: "Select a project." }));
+    $("#detail-col").replaceChildren();
+    await loadProjects();
+  }
+
+  // ---------- Middle column ----------
+  async function selectProject(id) {
+    state.projectId = id;
+    await loadProjects();
+    try { state.data = await api("/admin/api/projects/" + id); } catch { return; }
+    renderMid();
+  }
+
+  function renderMid() {
+    const col = $("#mid-col");
+    col.replaceChildren();
+    if (!state.data) { col.append(el("div", { class: "empty", text: "Select a project." })); return; }
+    const p = state.data.project;
+
+    col.append(el("div", { class: "card" },
+      el("h3", { text: p.name }),
+      el("div", { class: "sub muted", text: p.fromName ? `${p.fromName} <${p.fromAddress}>` : p.fromAddress }),
+      el("div", { class: "sub muted", text: `key ••••${p.apiKeyLast4} · ` }, el("span", { class: "badge " + (p.active ? "on" : "off"), text: p.active ? "active" : "inactive" })),
+      el("div", { class: "row-actions" },
+        el("button", { class: "sm", text: "Edit", onclick: () => editProject(p) }),
+        el("button", { class: "sm", text: "Rotate key", onclick: () => rotateKey(p) }),
+        el("button", { class: "sm danger", text: "Delete", onclick: () => deleteProject(p) }))));
+
+    const nav = el("div", { class: "toolbar" });
+    for (const s of ["emails", "templates", "forms"])
+      nav.append(el("button", { class: "sm" + (s === state.section ? " primary" : ""),
+        onclick: () => { state.section = s; renderMid(); }, text: s[0].toUpperCase() + s.slice(1) }));
+    col.append(nav);
+
+    if (state.section === "templates") renderTemplates(col);
+    else if (state.section === "forms") renderForms(col);
+    else renderEmails(col);
+  }
+
+  function renderTemplates(col) {
+    col.append(el("div", { class: "col-head" },
+      el("span", { class: "title", text: `${state.data.templates.length} template(s)` }),
+      el("button", { class: "sm primary", text: "+ New", onclick: newTemplate })));
+    if (!state.data.templates.length) { col.append(el("div", { class: "empty", text: "None yet." })); return; }
+    for (const t of state.data.templates) {
+      col.append(el("div", { class: "tmpl-row" },
+        el("div", { class: "grow", onclick: () => showTemplate(t) },
+          el("div", { text: t.name }),
+          el("div", { class: "sub", text: `${t.format} · "${t.subject}"` })),
+        el("button", { class: "sm danger", text: "✕", title: "Delete", onclick: () => deleteTemplate(t) })));
+    }
+  }
+
+  function newTemplate() {
+    openForm({
+      title: "New template",
+      fields: [
+        { key: "name", label: "Name", help: "Letters, numbers, dot, dash, underscore." },
+        { key: "subject", label: "Subject", help: "Supports {{variables}}." },
+        { key: "format", label: "Format", type: "select", options: ["markdown", "html"] },
+        { key: "body", label: "Body", type: "textarea", help: "Supports {{variables}}." },
+      ],
+      submitLabel: "Create",
+      onSubmit: async (v) => {
+        await api("/admin/api/projects/" + state.projectId + "/templates", { method: "POST", body: v });
+        await selectProject(state.projectId); state.section = "templates"; renderMid();
+      },
+    });
+  }
+
+  function editTemplate(t) {
+    openForm({
+      title: `Edit "${t.name}"`,
+      fields: [
+        { key: "name", label: "Name (immutable)", value: t.name, disabled: true },
+        { key: "subject", label: "Subject", value: t.subject },
+        { key: "format", label: "Format", type: "select", options: ["markdown", "html"], value: t.format },
+        { key: "body", label: "Body", type: "textarea", value: t.body },
+      ],
+      submitLabel: "Save",
+      onSubmit: async (v) => {
+        await api("/admin/api/templates/" + t._id, { method: "PATCH",
+          body: { subject: v.subject, format: v.format, body: v.body } });
+        await selectProject(state.projectId); state.section = "templates"; renderMid();
+        showTemplate((state.data.templates.find((x) => x._id === t._id)) || t);
+      },
+    });
+  }
+
+  async function deleteTemplate(t) {
+    if (!confirm(`Delete template "${t.name}"?`)) return;
+    await api("/admin/api/templates/" + t._id, { method: "DELETE" });
+    await selectProject(state.projectId); state.section = "templates"; renderMid();
+    $("#detail-col").replaceChildren();
+  }
+
+  function renderForms(col) {
+    col.append(el("div", { class: "col-head" }, el("span", { class: "title", text: `${state.data.forms.length} form(s)` })));
+    if (!state.data.forms.length) { col.append(el("div", { class: "empty", text: "None. Create with the create-form CLI." })); return; }
+    for (const f of state.data.forms)
+      col.append(el("div", { class: "item", onclick: () => showForm(f) },
+        el("div", { text: f.name }),
+        el("div", { class: "sub", text: `→ ${f.toAddress}` }),
+        el("div", { class: "sub", text: f.formId })));
+  }
+
+  function renderEmails(col) {
+    const select = el("select", { onchange: () => loadEmails(select.value) },
+      el("option", { value: "" }, "All statuses"),
+      ...["queued", "processing", "sent", "failed"].map((s) => el("option", { value: s }, s)));
+    col.append(el("div", { class: "toolbar" }, select), el("div", { id: "email-list-wrap" }));
+    loadEmails("");
+  }
+
+  async function loadEmails(status) {
+    const wrap = $("#email-list-wrap");
+    if (!wrap) return;
+    wrap.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
+    let emails;
+    try { emails = await api(`/admin/api/projects/${state.projectId}/emails${status ? "?status=" + status : ""}`); }
+    catch { wrap.replaceChildren(el("div", { class: "empty", text: "Failed to load." })); return; }
+    if (!emails.length) { wrap.replaceChildren(el("div", { class: "empty", text: "No emails." })); return; }
+    const tbody = el("tbody");
+    for (const e of emails)
+      tbody.append(el("tr", { class: "row", onclick: () => showEmail(e._id) },
+        el("td", { text: e.to }),
+        el("td", { text: e.templateName || e.subject || "—" }),
+        el("td", {}, el("span", { class: "badge " + e.status, text: e.status })),
+        el("td", { text: fmtDate(e.createdAt) })));
+    wrap.replaceChildren(el("table", {},
+      el("thead", {}, el("tr", {}, el("th", {}, "To"), el("th", {}, "Subject/Template"), el("th", {}, "Status"), el("th", {}, "When"))),
+      tbody));
+  }
+
+  // ---------- Detail column ----------
+  function showTemplate(t) {
+    $("#detail-col").replaceChildren(
+      el("div", { class: "toolbar" },
+        el("button", { class: "sm", text: "Edit", onclick: () => editTemplate(t) }),
+        el("button", { class: "sm danger", text: "Delete", onclick: () => deleteTemplate(t) })),
+      el("h3", { text: t.name }),
+      el("dl", { class: "detail" },
+        el("dt", {}, "Format"), el("dd", { text: t.format }),
+        el("dt", {}, "Subject"), el("dd", { text: t.subject })),
+      el("h4", { text: "Body" }), el("pre", { text: t.body }));
+  }
+
+  function showForm(f) {
+    $("#detail-col").replaceChildren(
+      el("h3", { text: f.name }),
+      el("dl", { class: "detail" },
+        el("dt", {}, "Form ID"), el("dd", { text: f.formId }),
+        el("dt", {}, "Sends to"), el("dd", { text: f.toAddress }),
+        el("dt", {}, "Notify tmpl"), el("dd", { text: f.notifyTemplate }),
+        el("dt", {}, "Ack tmpl"), el("dd", { text: f.ackTemplate || "(none)" }),
+        el("dt", {}, "Origins"), el("dd", { text: (f.allowedOrigins || []).join(", ") || "(any)" }),
+        el("dt", {}, "Active"), el("dd", { text: String(f.active) })));
+  }
+
+  async function showEmail(id) {
+    const col = $("#detail-col");
+    col.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
+    let e;
+    try { e = await api("/admin/api/emails/" + id); } catch { return; }
+    const blocks = [el("div", { class: "detail" }, el("h3", { text: "Email" }),
+      el("dl", {},
+        el("dt", {}, "To"), el("dd", { text: e.to }),
+        el("dt", {}, "From"), el("dd", { text: e.from }),
+        el("dt", {}, "Reply-To"), el("dd", { text: e.replyTo || "—" }),
+        el("dt", {}, "Status"), el("dd", {}, el("span", { class: "badge " + e.status, text: e.status })),
+        el("dt", {}, "Attempts"), el("dd", { text: `${e.attempts} / ${e.maxAttempts}` }),
+        el("dt", {}, "Provider"), el("dd", { text: e.provider || "—" }),
+        el("dt", {}, "Template"), el("dd", { text: e.templateName || "(raw)" }),
+        el("dt", {}, "Created"), el("dd", { text: fmtDate(e.createdAt) }),
+        el("dt", {}, "Sent"), el("dd", { text: fmtDate(e.sentAt) })))];
+    if (e.lastError) blocks.push(el("h4", { text: "Last error" }), el("pre", { text: e.lastError }));
+    if (e.subject) blocks.push(el("h4", { text: "Subject" }), el("pre", { text: e.subject }));
+    if (e.variables) blocks.push(el("h4", { text: "Variables" }), el("pre", { text: JSON.stringify(e.variables, null, 2) }));
+    if (e.markdown) blocks.push(el("h4", { text: "Markdown body" }), el("pre", { text: e.markdown }));
+    if (e.html) blocks.push(el("h4", { text: "HTML body" }), el("pre", { text: e.html }));
+    if (e.text) blocks.push(el("h4", { text: "Text body" }), el("pre", { text: e.text }));
+    col.replaceChildren(...blocks);
+  }
+
+  // Probe the API first: if it returns 200 (no token required, or a valid one is
+  // stored) we skip the gate and go straight to the dashboard; a 401 shows the gate.
+  async function boot() {
+    try { await api("/admin/api/projects"); }
+    catch { unlock(false); return; }
+    unlock(true); loadProjects(); checkHealth();
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

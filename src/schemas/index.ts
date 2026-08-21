@@ -79,6 +79,26 @@ export const templateParamsSchema = z.object({ name: templateName });
 export type TemplateCreateInput = z.infer<typeof templateCreateSchema>;
 export type TemplateUpdateInput = z.infer<typeof templateUpdateSchema>;
 
+// --- Projects (admin) ---
+
+export const projectCreateSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  fromAddress: z.string().email(),
+  fromName: z.string().trim().max(100).optional(),
+});
+
+export const projectUpdateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    fromAddress: z.string().email().optional(),
+    fromName: z.string().trim().max(100).optional(),
+    active: z.boolean().optional(),
+  })
+  .refine((d) => Object.keys(d).length > 0, { message: "Provide at least one field to update" });
+
+export type ProjectCreateInput = z.infer<typeof projectCreateSchema>;
+export type ProjectUpdateInput = z.infer<typeof projectUpdateSchema>;
+
 // --- Public form submission ---
 
 /**

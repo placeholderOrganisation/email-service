@@ -42,6 +42,9 @@ export const env = {
 
   mongoUri: required("MONGODB_URI", "mongodb://localhost:27017/email-service"),
 
+  // Shared secret for the /admin dashboard + its JSON API. Unset = admin UI disabled.
+  adminToken: process.env.ADMIN_TOKEN ?? "",
+
   // Ordered by preference: SES primary, Brevo failover. The provider layer
   // filters out any that aren't fully configured, so SES-only just works.
   smtp: {

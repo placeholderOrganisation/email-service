@@ -8,6 +8,7 @@ import sendRoutes from "./routes/send.js";
 import emailRoutes from "./routes/emails.js";
 import templateRoutes from "./routes/templates.js";
 import formRoutes from "./routes/forms.js";
+import adminRoutes from "./routes/admin.js";
 
 export function createApp() {
   const app = express();
@@ -31,6 +32,7 @@ export function createApp() {
   app.use("/v1/emails", emailRoutes);
   app.use("/v1/templates", templateRoutes);
   app.use("/v1/forms", formRoutes); // public (no API key) — see routes/forms.ts
+  app.use("/admin", adminRoutes); // dashboard UI + its token-gated JSON API
 
   app.use(notFoundHandler);
   app.use(errorHandler);
