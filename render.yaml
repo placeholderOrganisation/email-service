@@ -4,10 +4,10 @@
 # One-click: push this repo, then in Render: New > Blueprint, pick this repo.
 # You'll be prompted for MONGODB_URI and the SES/Brevo SMTP secrets.
 #
-# NOTE: on the free plan the instance sleeps after ~15 min idle, which pauses
-# the in-process send worker until the next request wakes it. Fine at hobby
-# scale; upgrade the plan (or split the worker into a Cron Job) if you need
-# guaranteed prompt sends during quiet periods.
+# NOTE: on the free plan (1) the instance sleeps after ~15 min idle, which
+# pauses the in-process send worker until the next request wakes it, and
+# (2) outbound SMTP on 25/465/587 is blocked — use SES port 2587 (below).
+# Upgrade the plan if you need 587 or guaranteed prompt sends while idle.
 services:
   - type: web
     name: email-service
@@ -43,10 +43,11 @@ services:
       - key: ADMIN_TOKEN
         sync: false
       # SES SMTP (primary). Host is region-specific; user/pass are IAM SMTP creds.
+      # 2587 is SES's STARTTLS alternate — Render free blocks 25/465/587.
       - key: SES_SMTP_HOST
         value: email-smtp.us-east-1.amazonaws.com
       - key: SES_SMTP_PORT
-        value: "587"
+        value: "2587"
       - key: SES_SMTP_USER
         sync: false
       - key: SES_SMTP_PASS

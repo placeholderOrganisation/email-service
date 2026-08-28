@@ -1,14 +1,18 @@
 import type { NextFunction, Request, Response } from "express";
+import { env } from "../config/env.js";
 import { AppError } from "../utils/errors.js";
 
 export function errorHandler(
   err: unknown,
-  _req: Request,
+  req: Request,
   res: Response,
   // next is required for Express to treat this as an error handler
   _next: NextFunction,
 ): void {
   if (err instanceof AppError) {
+    if (env.nodeEnv !== "test") {
+      console.warn(`[api] ${req.method} ${req.originalUrl} ${err.status} ${err.message}`);
+    }
     res.status(err.status).json({ error: err.message, details: err.details });
     return;
   }

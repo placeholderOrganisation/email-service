@@ -83,14 +83,27 @@ export async function sendWithFailover(
 
   const failures: Array<{ provider: string; error: string }> = [];
   for (const provider of providers) {
+    if (env.nodeEnv !== "test") {
+      console.log(`[providers] trying ${provider.name}`);
+    }
     try {
       const { messageId } = await provider.send(msg);
+      if (env.nodeEnv !== "test") {
+        console.log(`[providers] ${provider.name} accepted messageId=${messageId}`);
+      }
       return { provider: provider.name, messageId };
     } catch (err) {
+      const message = errorMessage(err);
       if (isPermanent(err)) {
+        if (env.nodeEnv !== "test") {
+          console.warn(`[providers] ${provider.name} permanently rejected: ${message}`);
+        }
         throw new PermanentSendError(`${provider.name} permanently rejected the message`, err);
       }
-      failures.push({ provider: provider.name, error: errorMessage(err) });
+      if (env.nodeEnv !== "test") {
+        console.warn(`[providers] ${provider.name} failed (transient): ${message}`);
+      }
+      failures.push({ provider: provider.name, error: message });
     }
   }
 

@@ -1,8 +1,10 @@
+import { env } from "../config/env.js";
 import { Email, MAX_ATTEMPTS, type EmailDocument } from "../models/Email.js";
 import { EmailTemplate } from "../models/EmailTemplate.js";
 import { render, type RenderSource } from "../services/render.js";
 import {
   PermanentSendError,
+  getProviders,
   sendWithFailover,
   type Provider,
 } from "../providers/index.js";
@@ -17,6 +19,15 @@ const BACKOFF_MS = [60_000, 5 * 60_000];
 let timer: NodeJS.Timeout | null = null;
 let ticking = false; // guards against overlapping ticks in this process
 let stopping = false;
+
+/** Worker logs. Skipped in tests; never includes recipients or body (PII). */
+function workerLog(level: "log" | "warn", message: string, extra: Record<string, unknown> = {}): void {
+  if (env.nodeEnv === "test") return;
+  const fields = Object.entries(extra)
+    .map(([k, v]) => `${k}=${v === undefined || v === "" ? "(none)" : JSON.stringify(v)}`)
+    .join(" ");
+  console[level](`[worker] ${message}${fields ? ` ${fields}` : ""}`);
+}
 
 /**
  * Atomically claims the next due email: a fresh `queued`, a `failed` row whose
@@ -78,6 +89,13 @@ function describe(err: unknown): string {
 }
 
 async function processEmail(email: EmailDocument, providers?: Provider[]): Promise<void> {
+  workerLog("log", "processing", {
+    id: String(email._id),
+    attempts: email.attempts,
+    template: email.templateName,
+    lastError: email.lastError,
+  });
+
   try {
     const { subject, html, text } = await buildMessage(email);
     const msg = {
@@ -99,6 +117,7 @@ async function processEmail(email: EmailDocument, providers?: Provider[]): Promi
     email.lastError = undefined;
     email.lockedAt = undefined;
     await email.save();
+    workerLog("log", "sent", { id: String(email._id), provider: result.provider });
   } catch (err) {
     email.lockedAt = undefined;
 
@@ -108,6 +127,11 @@ async function processEmail(email: EmailDocument, providers?: Provider[]): Promi
       email.attempts = MAX_ATTEMPTS;
       email.lastError = `permanent: ${describe(err)}`;
       await email.save();
+      workerLog("warn", "failed", {
+        id: String(email._id),
+        kind: "permanent",
+        error: email.lastError,
+      });
       return;
     }
 
@@ -115,11 +139,20 @@ async function processEmail(email: EmailDocument, providers?: Provider[]): Promi
     email.attempts += 1;
     email.status = "failed";
     email.lastError = `transient: ${describe(err)}`;
-    if (email.attempts < MAX_ATTEMPTS) {
-      const delay = BACKOFF_MS[Math.min(email.attempts - 1, BACKOFF_MS.length - 1)];
-      email.nextAttemptAt = new Date(Date.now() + delay);
+    const willRetry = email.attempts < MAX_ATTEMPTS;
+    let retryInMs: number | undefined;
+    if (willRetry) {
+      retryInMs = BACKOFF_MS[Math.min(email.attempts - 1, BACKOFF_MS.length - 1)];
+      email.nextAttemptAt = new Date(Date.now() + retryInMs);
     }
     await email.save();
+    workerLog("warn", "failed", {
+      id: String(email._id),
+      kind: "transient",
+      attempts: `${email.attempts}/${MAX_ATTEMPTS}`,
+      retryInMs: willRetry ? retryInMs : "(none, terminal)",
+      error: email.lastError,
+    });
   }
 }
 
@@ -149,6 +182,9 @@ async function tick(): Promise<void> {
 
 export function startWorker(): void {
   stopping = false;
+  // Resolve the provider list at boot so SES/Brevo config shows up immediately,
+  // not on the first queued send.
+  getProviders();
   void tick(); // run one immediately on boot
   timer = setInterval(() => void tick(), TICK_MS);
   console.log(`[worker] started (poll ${TICK_MS / 1000}s, batch ${BATCH})`);

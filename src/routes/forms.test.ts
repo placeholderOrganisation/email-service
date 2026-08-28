@@ -80,6 +80,23 @@ describe("POST /v1/forms/:formId/submit", () => {
     expect(await Email.countDocuments({})).toBe(0);
   });
 
+  it("allows a local Vite origin even when it is not on the form allowlist", async () => {
+    const res = await request(app)
+      .post(`/v1/forms/${FORM_ID}/submit`)
+      .set("Origin", "http://localhost:5173")
+      .send({ name: "Sam", email: "lead@example.com", message: "hi" });
+    expect(res.status).toBe(200);
+    expect(await Email.countDocuments({})).toBe(1);
+  });
+
+  it("rejects a missing origin when the form has an allowlist", async () => {
+    const res = await request(app)
+      .post(`/v1/forms/${FORM_ID}/submit`)
+      .send({ name: "Sam", email: "lead@example.com", message: "hi" });
+    expect(res.status).toBe(403);
+    expect(await Email.countDocuments({})).toBe(0);
+  });
+
   it("rejects an invalid payload", async () => {
     const res = await submit().send({ name: "Sam", email: "not-an-email", message: "hi" });
     expect(res.status).toBe(400);
