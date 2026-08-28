@@ -177,4 +177,43 @@ describe("templates", () => {
     expect(provider.sent[0].subject).toBe("Hi Sam");
     expect(provider.sent[0].html).toContain("<strong>Sam</strong>");
   });
+
+  it("sends the BookMe staff booking confirmation starter template", async () => {
+    const { templateGroups } = await import("../scripts/starterTemplates.js");
+    const def = templateGroups.booking.find((t) => t.name === "booking-staff-confirmation");
+    expect(def).toBeDefined();
+
+    await request(app).post("/v1/templates").set(auth()).send(def).expect(201);
+
+    const res = await request(app)
+      .post("/v1/send")
+      .set(auth())
+      .send({
+        to: "jordan@example.com",
+        templateName: "booking-staff-confirmation",
+        replyTo: "ada@example.com",
+        variables: {
+          recipientName: "Jordan",
+          customerName: "Ada",
+          customerEmail: "ada@example.com",
+          customerPhone: "555-0100",
+          serviceName: "Haircut",
+          staffName: "Jordan",
+          businessName: "Test Cuts",
+          when: "Monday, Aug 10 2026 at 9:00 AM",
+          timezone: "America/New_York",
+          duration: "30 minutes",
+          notes: "**Notes:** Side door.",
+          dashboardUrl: "https://bookme.example/dashboard",
+        },
+      });
+    expect(res.status).toBe(202);
+
+    const provider = recordingProvider();
+    await drainOnce([provider]);
+    expect(provider.sent[0].subject).toBe("New booking: Haircut with Ada");
+    expect(provider.sent[0].html).toContain("Ada");
+    expect(provider.sent[0].html).toContain("ada@example.com");
+    expect(provider.sent[0].replyTo).toBe("ada@example.com");
+  });
 });

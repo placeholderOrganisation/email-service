@@ -77,6 +77,7 @@ re-run, upserts by name:
 ```bash
 npm run seed-templates -- --project "Project X"                 # all groups
 npm run seed-templates -- --project "Project X" --set account   # one group
+npm run seed-templates -- --project "BookMe" --set account,booking
 ```
 
 Starter templates (`account` · `booking` · `order`):
@@ -86,8 +87,9 @@ Starter templates (`account` · `booking` · `order`):
 | `welcome` | `name`, `product`, `actionUrl` |
 | `verify-email` | `name`, `product`, `verifyUrl`, `expiresIn` |
 | `password-reset` | `name`, `product`, `resetUrl`, `expiresIn` |
-| `booking-confirmation` | `customerName`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `location`, `rescheduleUrl`, `cancelUrl` |
-| `booking-reminder` | `customerName`, `serviceName`, `staffName`, `when`, `timezone`, `lead`, `cancelUrl` |
+| `booking-confirmation` | `customerName`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `duration`, `notes` |
+| `booking-staff-confirmation` | `recipientName`, `customerName`, `customerEmail`, `customerPhone`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `duration`, `notes`, `dashboardUrl` |
+| `booking-reminder` | `customerName`, `serviceName`, `staffName`, `when`, `timezone`, `lead` |
 | `booking-cancellation` | `customerName`, `serviceName`, `businessName`, `when`, `timezone`, `rebookUrl` |
 | `order-confirmation` | `customerName`, `orderNumber`, `itemsList`, `total`, `shippingAddress` |
 | `receipt` | `customerName`, `orderNumber`, `orderDate`, `itemsList`, `subtotal`, `tax`, `shipping`, `total`, `paymentMethod` |

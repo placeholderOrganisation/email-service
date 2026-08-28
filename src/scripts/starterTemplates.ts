@@ -62,9 +62,12 @@ This link expires in {{expiresIn}}. If you didn't request this, no action is nee
   },
 ];
 
-// --- Booking emails (calendly-clone) ---
-// Variables: customerName, serviceName, staffName, businessName, when, timezone,
-//            location, lead, rescheduleUrl, cancelUrl, rebookUrl
+// --- Booking emails (calendly-clone / BookMe) ---
+// Customer: customerName, serviceName, staffName, businessName, when, timezone,
+//           duration, notes, lead, rebookUrl
+// Staff/owner: recipientName, customerName, customerEmail, customerPhone,
+//              serviceName, staffName, businessName, when, timezone, duration,
+//              notes, dashboardUrl
 const booking: TemplateDef[] = [
   {
     name: "booking-confirmation",
@@ -77,13 +80,32 @@ Hi {{customerName}}, your appointment with **{{businessName}}** is confirmed.
 - **Service:** {{serviceName}}
 - **With:** {{staffName}}
 - **When:** {{when}} ({{timezone}})
-- **Where:** {{location}}
+- **Duration:** {{duration}}
 
-Need to make a change?
-
-[Reschedule]({{rescheduleUrl}}) · [Cancel]({{cancelUrl}})
+{{notes}}
 
 See you then!`,
+  },
+  {
+    name: "booking-staff-confirmation",
+    subject: "New booking: {{serviceName}} with {{customerName}}",
+    format: "markdown",
+    body: `# New booking
+
+Hi {{recipientName}}, **{{customerName}}** just booked **{{serviceName}}** at **{{businessName}}**.
+
+- **When:** {{when}} ({{timezone}})
+- **Duration:** {{duration}}
+- **With:** {{staffName}}
+- **Customer:** {{customerName}}
+- **Email:** {{customerEmail}}
+- **Phone:** {{customerPhone}}
+
+{{notes}}
+
+[Open dashboard]({{dashboardUrl}})
+
+Reply to this email to reach the customer directly.`,
   },
   {
     name: "booking-reminder",
@@ -97,7 +119,7 @@ Hi {{customerName}}, this is a friendly reminder for your upcoming appointment {
 - **With:** {{staffName}}
 - **When:** {{when}} ({{timezone}})
 
-If you can no longer make it, please [reschedule or cancel]({{cancelUrl}}) so we can free up the slot.`,
+If you can no longer make it, please get in touch so we can free up the slot.`,
   },
   {
     name: "booking-cancellation",
