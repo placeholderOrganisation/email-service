@@ -107,6 +107,27 @@ describe("admin API data", () => {
     expect(res.body.text).toBe("hi");
   });
 
+  it("deletes an email by id", async () => {
+    const [email] = await Email.find({});
+    const del = await request(app).delete(`/admin/api/emails/${email._id}`).set(adminHeaders());
+    expect(del.status).toBe(204);
+    expect(await Email.countDocuments({})).toBe(0);
+  });
+
+  it("404s deleting an unknown email", async () => {
+    const res = await request(app)
+      .delete("/admin/api/emails/000000000000000000000000")
+      .set(adminHeaders());
+    expect(res.status).toBe(404);
+  });
+
+  it("guards email delete behind the admin token", async () => {
+    const [email] = await Email.find({});
+    const res = await request(app).delete(`/admin/api/emails/${email._id}`);
+    expect(res.status).toBe(401);
+    expect(await Email.countDocuments({})).toBe(1);
+  });
+
   it("404s an unknown project", async () => {
     const res = await request(app)
       .get("/admin/api/projects/000000000000000000000000")

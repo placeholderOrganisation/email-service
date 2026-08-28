@@ -166,7 +166,7 @@ api.delete(
   }),
 );
 
-// ---- Emails (read-only) ----
+// ---- Emails ----
 
 api.get(
   "/projects/:id/emails",
@@ -187,13 +187,27 @@ api.get(
   }),
 );
 
+async function loadEmail(id: string) {
+  if (!isValidObjectId(id)) throw notFound("Email not found");
+  const email = await Email.findById(id);
+  if (!email) throw notFound("Email not found");
+  return email;
+}
+
 api.get(
   "/emails/:id",
   asyncHandler(async (req, res) => {
-    if (!isValidObjectId(req.params.id)) throw notFound("Email not found");
-    const email = await Email.findById(req.params.id);
-    if (!email) throw notFound("Email not found");
+    const email = await loadEmail(req.params.id);
     res.json(email);
+  }),
+);
+
+api.delete(
+  "/emails/:id",
+  asyncHandler(async (req, res) => {
+    const email = await loadEmail(req.params.id);
+    await email.deleteOne();
+    res.status(204).end();
   }),
 );
 

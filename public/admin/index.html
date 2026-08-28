@@ -534,10 +534,22 @@
         el("td", { text: e.to }),
         el("td", { text: e.templateName || e.subject || "—" }),
         el("td", {}, el("span", { class: "badge " + e.status, text: e.status })),
-        el("td", { text: fmtDate(e.createdAt) })));
+        el("td", { text: fmtDate(e.createdAt) }),
+        el("td", {}, el("button", { class: "sm danger", text: "✕", title: "Delete",
+          onclick: (ev) => { ev.stopPropagation(); deleteEmail(e); } }))));
     wrap.replaceChildren(el("table", {},
-      el("thead", {}, el("tr", {}, el("th", {}, "To"), el("th", {}, "Subject/Template"), el("th", {}, "Status"), el("th", {}, "When"))),
+      el("thead", {}, el("tr", {},
+        el("th", {}, "To"), el("th", {}, "Subject/Template"), el("th", {}, "Status"),
+        el("th", {}, "When"), el("th", {}, ""))),
       tbody));
+  }
+
+  async function deleteEmail(e) {
+    if (!confirm(`Delete this email to ${e.to}? This cannot be undone.`)) return;
+    await api("/admin/api/emails/" + e._id, { method: "DELETE" });
+    $("#detail-col").replaceChildren();
+    const select = $("#mid-col .toolbar select");
+    if (select) loadEmails(select.value);
   }
 
   // ---------- Detail column ----------
@@ -570,7 +582,9 @@
     col.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
     let e;
     try { e = await api("/admin/api/emails/" + id); } catch { return; }
-    const blocks = [el("div", { class: "detail" }, el("h3", { text: "Email" }),
+    const blocks = [el("div", { class: "toolbar" },
+      el("button", { class: "sm danger", text: "Delete", onclick: () => deleteEmail(e) })),
+      el("div", { class: "detail" }, el("h3", { text: "Email" }),
       el("dl", {},
         el("dt", {}, "To"), el("dd", { text: e.to }),
         el("dt", {}, "From"), el("dd", { text: e.from }),
