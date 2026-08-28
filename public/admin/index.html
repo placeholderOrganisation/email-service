@@ -39,9 +39,15 @@
   button.danger:hover { background: var(--danger); color: #fff; }
   button.sm { padding: 3px 8px; font-size: 12px; }
   a { color: var(--accent); }
-  .layout { display: grid; grid-template-columns: 240px 300px 1fr; height: calc(100vh - 49px); }
-  .col { border-right: 1px solid var(--border); overflow-y: auto; padding: 10px; }
-  .col:last-child { border-right: none; }
+  .layout {
+    display: grid;
+    grid-template-columns: var(--col-projects, 240px) 5px var(--col-mid, 560px) 5px minmax(280px, 1fr);
+    height: calc(100vh - 49px);
+  }
+  .col { overflow-y: auto; padding: 10px; min-width: 0; }
+  .gutter { cursor: col-resize; background: var(--border); }
+  .gutter:hover, .gutter.dragging { background: var(--accent); }
+  body.col-resizing { cursor: col-resize; user-select: none; }
   .item { padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; }
   .item:hover { background: var(--panel); }
   .item.active { background: var(--accent); color: #fff; }
@@ -112,11 +118,14 @@
     <span class="dot" id="health-dot"></span>
     <h1>email-service admin</h1>
     <button id="refresh-btn">Refresh</button>
+    <button id="reset-cols-btn" title="Reset column widths">Reset layout</button>
     <button id="logout-btn">Lock</button>
   </header>
-  <div class="layout">
+  <div class="layout" id="layout">
     <div class="col" id="projects-col"></div>
+    <div class="gutter" data-col="projects" title="Drag to resize"></div>
     <div class="col" id="mid-col"></div>
+    <div class="gutter" data-col="mid" title="Drag to resize"></div>
     <div class="col" id="detail-col"></div>
   </div>
 </div>
@@ -159,7 +168,14 @@
     return json;
   }
 
-  function unlock(ok) { $("#gate").hidden = ok; $("#app").hidden = !ok; }
+  function unlock(ok) {
+    $("#gate").hidden = ok;
+    $("#app").hidden = !ok;
+    if (ok) {
+      cols = clampCols(cols);
+      applyCols(cols);
+    }
+  }
 
   // ---------- Modal form ----------
   // Each modal owns its overlay node and removes only itself, so a follow-up
@@ -241,6 +257,82 @@
   $("#refresh-btn").addEventListener("click", () => {
     loadProjects(); if (state.projectId) selectProject(state.projectId); checkHealth();
   });
+
+  const COLS_KEY = "es_admin_cols";
+  const COL_DEFAULTS = { projects: 240, mid: 560 };
+  const COL_MIN = { projects: 160, mid: 280, detail: 280 };
+  const COL_MAX = { projects: 420, mid: 900 };
+  let cols = loadCols();
+
+  function loadCols() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COLS_KEY) || "null");
+      return { ...COL_DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
+    } catch {
+      return { ...COL_DEFAULTS };
+    }
+  }
+
+  function applyCols(cols) {
+    const layout = $("#layout");
+    layout.style.setProperty("--col-projects", Math.round(cols.projects) + "px");
+    layout.style.setProperty("--col-mid", Math.round(cols.mid) + "px");
+  }
+
+  function clampCols(cols) {
+    const next = {
+      projects: Math.max(COL_MIN.projects, Math.min(COL_MAX.projects, Number(cols.projects) || COL_DEFAULTS.projects)),
+      mid: Math.max(COL_MIN.mid, Math.min(COL_MAX.mid, Number(cols.mid) || COL_DEFAULTS.mid)),
+    };
+    const gutters = 10;
+    const layoutW = $("#layout").clientWidth;
+    // #app is hidden until unlock, so clientWidth is 0 at boot — skip viewport clamp then.
+    if (layoutW < COL_MIN.projects + COL_MIN.mid + COL_MIN.detail + gutters) return next;
+    const maxMid = layoutW - next.projects - gutters - COL_MIN.detail;
+    next.mid = Math.max(COL_MIN.mid, Math.min(next.mid, maxMid));
+    const maxProjects = layoutW - next.mid - gutters - COL_MIN.detail;
+    next.projects = Math.max(COL_MIN.projects, Math.min(next.projects, maxProjects));
+    return next;
+  }
+
+  function initSplitters() {
+    cols = clampCols(cols);
+    applyCols(cols);
+    document.querySelectorAll(".gutter").forEach((gutter) => {
+      gutter.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        const which = gutter.getAttribute("data-col");
+        const startX = e.clientX;
+        const startW = cols[which];
+        gutter.classList.add("dragging");
+        document.body.classList.add("col-resizing");
+        const onMove = (ev) => {
+          cols[which] = startW + (ev.clientX - startX);
+          cols = clampCols(cols);
+          applyCols(cols);
+        };
+        const onUp = () => {
+          gutter.classList.remove("dragging");
+          document.body.classList.remove("col-resizing");
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          localStorage.setItem(COLS_KEY, JSON.stringify(cols));
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      });
+    });
+    window.addEventListener("resize", () => {
+      cols = clampCols(cols);
+      applyCols(cols);
+    });
+    $("#reset-cols-btn").addEventListener("click", () => {
+      cols = clampCols({ ...COL_DEFAULTS });
+      applyCols(cols);
+      localStorage.setItem(COLS_KEY, JSON.stringify(cols));
+    });
+  }
+  initSplitters();
 
   async function checkHealth() {
     const dot = $("#health-dot");
