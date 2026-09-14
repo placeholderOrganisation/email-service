@@ -7,7 +7,8 @@ export default defineConfig({
     testTimeout: 60_000,
     hookTimeout: 120_000,
     // Set before any module loads (config/env.ts reads it once at import time),
-    // so admin.test.ts can authenticate against a known token.
-    env: { ADMIN_TOKEN: "test-admin-token" },
+    // so admin.test.ts can authenticate against a known token. OPENAI_API_KEY is
+    // forced empty so the AI service uses its deterministic mock (no live calls).
+    env: { ADMIN_TOKEN: "test-admin-token", OPENAI_API_KEY: "" },
   },
 });

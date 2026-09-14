@@ -8,9 +8,12 @@ const projectSchema = new Schema(
   {
     name: { type: String, required: true, trim: true },
     // e.g. "projectx@minteksoftware.com" — must be on a domain verified in SES.
-    fromAddress: { type: String, required: true, trim: true, lowercase: true },
+    // Optional: review-only clients never send email, so they need no sender.
+    fromAddress: { type: String, required: false, trim: true, lowercase: true },
     // Optional display name, e.g. "Project X" → From: "Project X <projectx@...>".
     fromName: { type: String, default: "" },
+    // Free-text business voice/tone hints the AI uses when drafting review replies.
+    replyGuidelines: { type: String, default: "" },
     apiKeyHash: { type: String, required: true, unique: true },
     apiKeyLast4: { type: String, required: true },
     active: { type: Boolean, default: true },

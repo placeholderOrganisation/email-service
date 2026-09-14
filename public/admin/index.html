@@ -60,6 +60,8 @@
   th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
   tr.row { cursor: pointer; }
   tr.row:hover { background: var(--panel); }
+  #review-list-wrap th:first-child, #review-list-wrap td:first-child { width: 28px; padding-right: 4px; }
+  input[type=checkbox] { cursor: pointer; accent-color: var(--accent); }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
   .badge.sent { background: rgba(74,222,128,.15); color: var(--ok); }
   .badge.failed { background: rgba(255,107,107,.15); color: var(--danger); }
@@ -149,7 +151,26 @@
   };
   const fmtDate = (d) => (d ? new Date(d).toLocaleString() : "—");
 
-  const state = { token: localStorage.getItem("es_admin_token") || "", projectId: null, section: "emails", data: null };
+  // Map the four review lifecycle status dimensions onto the existing .badge
+  // color classes: green (on/sent) = good/done, amber (queued) = in progress,
+  // red (failed) = error, grey (off) = neutral/waiting.
+  const REVIEW_BADGE = {
+    ready: "on", approved: "on", posted: "sent",
+    failed: "failed",
+    processing: "queued", generating: "queued", draft: "queued",
+    pending: "off", awaiting_client: "off", unpublished: "off",
+  };
+  const badgeFor = (s) => "badge " + (REVIEW_BADGE[s] || "off");
+  const snippet = (t, n) => { t = (t || "").trim(); return t.length > (n || 60) ? t.slice(0, n || 60) + "…" : t; };
+
+  // A single labelled form field (mirrors openForm's .field markup) for the
+  // custom import modal, which needs conditional single/bulk sections.
+  const field = (label, input, help) =>
+    el("div", { class: "field" },
+      el("label", {}, label), input,
+      help ? el("div", { class: "muted", style: "font-size:12px;margin-top:2px", text: help }) : null);
+
+  const state = { token: localStorage.getItem("es_admin_token") || "", projectId: null, section: "emails", view: "project", data: null };
 
   async function api(path, opts) {
     opts = opts || {};
@@ -350,14 +371,20 @@
       el("div", { class: "col-head" },
         el("span", { class: "title", text: "Projects" }),
         el("button", { class: "sm primary", text: "+ New", onclick: newProject })));
+    // Cross-project posting queue — sits above the project list so the operator
+    // can jump straight to the weekly "post approved replies to Google" workflow.
+    col.append(el("div",
+      { class: "item" + (state.view === "global" ? " active" : ""), onclick: selectGlobalApproved },
+      el("div", { text: "★ All approved replies" }),
+      el("div", { class: "sub", text: "Cross-project posting queue" })));
     let projects;
     try { projects = await api("/admin/api/projects"); } catch { return; }
     if (!projects.length) { col.append(el("div", { class: "empty", text: "No projects yet." })); return; }
     for (const p of projects) {
       col.append(el("div",
-        { class: "item" + (p._id === state.projectId ? " active" : ""), onclick: () => selectProject(p._id) },
+        { class: "item" + (p._id === state.projectId && state.view === "project" ? " active" : ""), onclick: () => selectProject(p._id) },
         el("div", { text: p.name }),
-        el("div", { class: "sub", text: p.fromAddress + (p.active ? "" : " · inactive") })));
+        el("div", { class: "sub", text: (p.fromAddress || "no sender") + (p.active ? "" : " · inactive") })));
     }
   }
 
@@ -412,8 +439,12 @@
   }
 
   // ---------- Middle column ----------
+  const PROJECT_SECTIONS = ["emails", "reviews", "approved", "templates", "forms"];
+
   async function selectProject(id) {
     state.projectId = id;
+    state.view = "project";
+    if (!PROJECT_SECTIONS.includes(state.section)) state.section = "emails";
     await loadProjects();
     try { state.data = await api("/admin/api/projects/" + id); } catch { return; }
     renderMid();
@@ -435,13 +466,15 @@
         el("button", { class: "sm danger", text: "Delete", onclick: () => deleteProject(p) }))));
 
     const nav = el("div", { class: "toolbar" });
-    for (const s of ["emails", "templates", "forms"])
+    for (const s of PROJECT_SECTIONS)
       nav.append(el("button", { class: "sm" + (s === state.section ? " primary" : ""),
         onclick: () => { state.section = s; renderMid(); }, text: s[0].toUpperCase() + s.slice(1) }));
     col.append(nav);
 
     if (state.section === "templates") renderTemplates(col);
     else if (state.section === "forms") renderForms(col);
+    else if (state.section === "reviews") renderReviews(col);
+    else if (state.section === "approved") renderApproved(col);
     else renderEmails(col);
   }
 
@@ -550,6 +583,676 @@
     $("#detail-col").replaceChildren();
     const select = $("#mid-col .toolbar select");
     if (select) loadEmails(select.value);
+  }
+
+  // ---------- Reviews (middle column list + detail) ----------
+  function renderReviews(col) {
+    // Status values MUST match admin.ts OPERATOR_STATUS_FILTERS.
+    const filterSel = el("select", { onchange: () => loadReviews(filterSel.value) },
+      el("option", { value: "" }, "All"),
+      el("option", { value: "needs_review" }, "Needs review"),
+      el("option", { value: "approved" }, "Approved"),
+      el("option", { value: "posted" }, "Posted"),
+      el("option", { value: "failed" }, "Failed"));
+    const delBtn = el("button", {
+      class: "sm danger", id: "review-del-selected", text: "Delete selected",
+      disabled: "", onclick: deleteSelectedReviews,
+    });
+    col.append(
+      el("div", { class: "toolbar" },
+        el("button", { class: "sm primary", text: "Import reviews", onclick: importReviews }),
+        filterSel,
+        delBtn),
+      el("div", { id: "review-list-wrap" }));
+    loadReviews("");
+  }
+
+  function reviewFilterValue() {
+    const sel = $("#mid-col .toolbar select");
+    return sel ? sel.value : "";
+  }
+
+  function refreshReviewList() {
+    if ($("#review-list-wrap")) loadReviews(reviewFilterValue());
+  }
+
+  async function loadReviews(status) {
+    const wrap = $("#review-list-wrap");
+    if (!wrap) return;
+    wrap.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
+    updateReviewSelection();
+    let reviews;
+    try { reviews = await api(`/admin/api/projects/${state.projectId}/reviews${status ? "?status=" + status : ""}`); }
+    catch { wrap.replaceChildren(el("div", { class: "empty", text: "Failed to load." })); updateReviewSelection(); return; }
+    if (!reviews.length) { wrap.replaceChildren(el("div", { class: "empty", text: "No reviews." })); updateReviewSelection(); return; }
+    const tbody = el("tbody");
+    for (const r of reviews) {
+      const check = el("input", { type: "checkbox", "data-id": r._id, onchange: updateReviewSelection });
+      tbody.append(el("tr", { class: "row", onclick: () => showReview(r._id) },
+        el("td", { onclick: (e) => e.stopPropagation() }, check),
+        el("td", { text: `${r.rating}/5` }),
+        el("td", { text: r.author?.name || "—" }),
+        el("td", { text: fmtDate(r.reviewedAt) }),
+        el("td", { text: snippet(r.text) }),
+        el("td", {},
+          el("span", { class: badgeFor(r.analysis?.status), title: "analysis", text: r.analysis?.status || "—" }), " ",
+          el("span", { class: badgeFor(r.reply?.status), title: "reply", text: r.reply?.status || "—" }), " ",
+          el("span", { class: badgeFor(r.approval?.status), title: "approval", text: r.approval?.status || "—" }), " ",
+          el("span", { class: badgeFor(r.publishing?.status), title: "posting", text: r.publishing?.status || "—" }))));
+    }
+    const selectAll = el("input", { type: "checkbox", id: "review-select-all", onchange: () => {
+      wrap.querySelectorAll("tbody input[type=checkbox]").forEach((c) => { c.checked = selectAll.checked; });
+      updateReviewSelection();
+    } });
+    wrap.replaceChildren(el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", {}, selectAll),
+        el("th", {}, "Rating"), el("th", {}, "Reviewer"), el("th", {}, "Date"),
+        el("th", {}, "Review"), el("th", {}, "Status"))),
+      tbody));
+    updateReviewSelection();
+  }
+
+  function selectedReviewIds() {
+    return [...document.querySelectorAll("#review-list-wrap tbody input[type=checkbox]:checked")]
+      .map((c) => c.getAttribute("data-id"))
+      .filter(Boolean);
+  }
+
+  function updateReviewSelection() {
+    const ids = selectedReviewIds();
+    const btn = $("#review-del-selected");
+    if (btn) {
+      btn.disabled = ids.length === 0;
+      btn.textContent = ids.length ? `Delete selected (${ids.length})` : "Delete selected";
+    }
+    const boxes = [...document.querySelectorAll("#review-list-wrap tbody input[type=checkbox]")];
+    const all = $("#review-select-all");
+    if (all) {
+      all.checked = boxes.length > 0 && boxes.every((c) => c.checked);
+      all.indeterminate = boxes.some((c) => c.checked) && !all.checked;
+    }
+  }
+
+  async function deleteSelectedReviews() {
+    const ids = selectedReviewIds();
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} review${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    const btn = $("#review-del-selected");
+    if (btn) btn.disabled = true;
+    try {
+      for (const id of ids) await api("/admin/api/reviews/" + id, { method: "DELETE" });
+      $("#detail-col").replaceChildren();
+      refreshReviewList();
+    } catch (ex) {
+      alert(ex.message || "Delete failed");
+      refreshReviewList();
+    }
+  }
+
+  async function showReview(id) {
+    const col = $("#detail-col");
+    col.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
+    let r;
+    try { r = await api("/admin/api/reviews/" + id); } catch { return; }
+    renderReviewDetail(r);
+  }
+
+  function renderReviewDetail(r) {
+    const col = $("#detail-col");
+    // Once posted, the reply is locked (backend returns 409); guard in the UI too.
+    const posted = r.publishing?.status === "posted";
+
+    const ta = el("textarea", { id: "review-reply-body" });
+    ta.value = r.reply?.body || "";
+    if (posted) ta.disabled = true;
+
+    const analysisCard = el("div", { class: "card" },
+      el("h3", {}, "AI Analysis ", el("span", { class: badgeFor(r.analysis?.status), text: r.analysis?.status || "—" })),
+      el("dl", { class: "detail" },
+        el("dt", {}, "Sentiment"), el("dd", { text: r.analysis?.sentiment || "—" }),
+        el("dt", {}, "Tone"), el("dd", { text: r.analysis?.suggestedTone || "—" }),
+        el("dt", {}, "Topics"), el("dd", { text: (r.analysis?.topics || []).join(", ") || "—" }),
+        el("dt", {}, "Summary"), el("dd", { text: r.analysis?.summary || "—" })));
+    if (r.analysis?.error) analysisCard.append(el("div", { class: "muted", text: "Error: " + r.analysis.error }));
+
+    const replyCard = el("div", { class: "card" },
+      el("h3", {}, "Reply ",
+        el("span", { class: badgeFor(r.reply?.status), text: r.reply?.status || "—" }),
+        r.reply?.source ? el("span", { class: "muted", text: " · " + r.reply.source }) : null),
+      ta,
+      el("div", { class: "row-actions" },
+        el("button", { class: "sm", text: "Regenerate", disabled: posted || undefined,
+          onclick: () => reviewAction(r._id, "reply/regenerate") }),
+        el("button", { class: "sm primary", text: "Save reply", disabled: posted || undefined,
+          onclick: () => saveReply(r._id, ta.value) }),
+        el("button", { class: "sm", text: "Analyze", onclick: () => reviewAction(r._id, "analyze") }),
+        el("button", { class: "sm primary", text: "Approve", disabled: posted || undefined,
+          onclick: () => reviewAction(r._id, "reply/approve") })));
+    if (r.reply?.error) replyCard.append(el("div", { class: "muted", text: "Error: " + r.reply.error }));
+
+    col.replaceChildren(
+      el("div", { class: "toolbar" },
+        el("button", { class: "sm danger", text: "Delete", onclick: () => deleteReview(r) })),
+      el("h3", {}, `${r.rating}/5 — ${r.author?.name || "Anonymous"}`),
+      el("dl", { class: "detail" },
+        el("dt", {}, "Rating"), el("dd", { text: `${r.rating}/5` }),
+        el("dt", {}, "Reviewer"), el("dd", { text: r.author?.name || "—" }),
+        el("dt", {}, "Date"), el("dd", { text: fmtDate(r.reviewedAt) }),
+        el("dt", {}, "Client approval"), el("dd", {},
+          el("span", { class: badgeFor(r.approval?.status), text: r.approval?.status || "—" }),
+          el("span", { class: "muted", text: r.approval?.approvedBy ? ` by ${r.approval.approvedBy} · ${fmtDate(r.approval.approvedAt)}` : "" })),
+        el("dt", {}, "Google posting"), el("dd", {},
+          el("span", { class: badgeFor(r.publishing?.status), text: r.publishing?.status || "—" }),
+          el("span", { class: "muted", text: r.publishing?.postedAt ? ` · ${fmtDate(r.publishing.postedAt)}` : "" }))),
+      el("h4", {}, "Review text"),
+      el("pre", { text: r.text || "—" }),
+      analysisCard,
+      replyCard);
+  }
+
+  // POST helper for the no-body review lifecycle actions (analyze/regenerate/approve).
+  async function reviewAction(id, path) {
+    try {
+      const r = await api(`/admin/api/reviews/${id}/${path}`, { method: "POST", body: {} });
+      renderReviewDetail(r);
+      refreshReviewList();
+    } catch (ex) { alert(ex.message || "Action failed"); }
+  }
+
+  async function saveReply(id, body) {
+    try {
+      const r = await api(`/admin/api/reviews/${id}/reply`, { method: "PATCH", body: { body } });
+      renderReviewDetail(r);
+      refreshReviewList();
+    } catch (ex) { alert(ex.message || "Save failed"); }
+  }
+
+  async function deleteReview(r) {
+    if (!confirm("Delete this review? This cannot be undone.")) return;
+    await api("/admin/api/reviews/" + r._id, { method: "DELETE" });
+    $("#detail-col").replaceChildren();
+    refreshReviewList();
+  }
+
+  // ---------- Google reviews HTML paste importer (client-side) ----------
+  // The operator copies a review container's HTML from DevTools ("Copy element")
+  // and pastes it here; we parse it in-browser with DOMParser. We deliberately
+  // AVOID Google's minified class names (they rotate often). Every field is read
+  // via an ordered list of strategies that lean first on functional data
+  // attributes and the accessibility tree, and only fall back to class names as
+  // a last resort. If Google changes their markup, edit STRATEGIES below.
+
+  const REL_AGE_RE = /(?:edited\s+)?\b(a|an|\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago\b/i;
+  const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+
+  // Convert a Google relative age ("3 months ago", "a year ago", "Edited 2
+  // weeks ago") into an approximate Date. Deterministic; the only date source we
+  // trust from a paste.
+  function relativeAgeToDate(str) {
+    const m = (str || "").match(REL_AGE_RE);
+    if (!m) return null;
+    const n = /^an?$/i.test(m[1]) ? 1 : parseInt(m[1], 10);
+    if (!Number.isFinite(n)) return null;
+    const d = new Date();
+    switch (m[2].toLowerCase()) {
+      case "second": d.setSeconds(d.getSeconds() - n); break;
+      case "minute": d.setMinutes(d.getMinutes() - n); break;
+      case "hour": d.setHours(d.getHours() - n); break;
+      case "day": d.setDate(d.getDate() - n); break;
+      case "week": d.setDate(d.getDate() - 7 * n); break;
+      case "month": d.setMonth(d.getMonth() - n); break;
+      case "year": d.setFullYear(d.getFullYear() - n); break;
+      default: return null;
+    }
+    return d;
+  }
+
+  function hasAncestorWithReviewId(node, id) {
+    let p = node.parentElement;
+    while (p) { if (p.getAttribute && p.getAttribute("data-review-id") === id) return true; p = p.parentElement; }
+    return false;
+  }
+
+  // Smallest element whose own text (no element children) matches `re`.
+  function findLeafByText(root, re) {
+    for (const n of root.querySelectorAll("*")) {
+      if (n.childElementCount === 0 && re.test(norm(n.textContent))) return n;
+    }
+    return null;
+  }
+
+  // First leaf relative-age string in `root`, skipping anything inside `exclude`.
+  function firstRelAge(root, exclude) {
+    for (const n of root.querySelectorAll("*")) {
+      if (exclude && exclude.contains(n)) continue;
+      if (n.childElementCount === 0) {
+        const t = norm(n.textContent);
+        if (REL_AGE_RE.test(t)) return t;
+      }
+    }
+    return "";
+  }
+
+  // Owner-response subtree, anchored on the stable literal label rather than a
+  // class. Returns the container element that holds both the "Response from the
+  // owner" title and the response body, or null.
+  function findOwnerRoot(block) {
+    const title = findLeafByText(block, /^response from the owner/i);
+    if (!title) return null;
+    let cur = title.parentElement;
+    for (let i = 0; i < 5 && cur && cur !== block; i++) {
+      if (ownerBodyWithin(cur, title)) return cur;
+      cur = cur.parentElement;
+    }
+    return title.parentElement || null;
+  }
+
+  function ownerBodyWithin(container, title) {
+    let best = null;
+    for (const n of container.querySelectorAll("[lang], span, div")) {
+      if (title.contains(n) || n.contains(title) || n.childElementCount > 3) continue;
+      const t = norm(n.textContent);
+      if (!t || /^response from the owner$/i.test(t)) continue;
+      if (REL_AGE_RE.test(t) && t.length < 40) continue; // a bare date line
+      if (!best || t.length > norm(best.textContent).length) best = n;
+    }
+    return best;
+  }
+
+  function extractOwnerResponse(block, ownerRoot) {
+    if (!ownerRoot) return null;
+    const title = findLeafByText(ownerRoot, /^response from the owner/i) || ownerRoot;
+    const body = ownerBodyWithin(ownerRoot, title);
+    const text = body ? norm(body.textContent) : "";
+    if (!text) return null;
+    const postedAt = relativeAgeToDate(firstRelAge(ownerRoot));
+    return { text, postedAt: postedAt ? postedAt.toISOString() : "" };
+  }
+
+  // --- Field extractor helpers (attribute/ARIA-first) ---
+  function ariaStars(block, sel) {
+    for (const n of block.querySelectorAll(sel)) {
+      const m = (n.getAttribute("aria-label") || "").match(/(\d(?:\.\d)?)\s*stars?/i);
+      if (m) { const v = Math.round(parseFloat(m[1])); if (v >= 1 && v <= 5) return v; }
+    }
+    return null;
+  }
+  function cleanName(s) {
+    s = norm(s);
+    return s && !/stars?|\bago\b|response from the owner|photo of/i.test(s) ? s : null;
+  }
+  function photoOf(block) {
+    const n = block.querySelector('[aria-label^="Photo of" i]');
+    const m = n && n.getAttribute("aria-label").match(/photo of\s+(.+)/i);
+    return m ? norm(m[1]) : null;
+  }
+  function contribName(block) {
+    const n = block.querySelector('a[data-href*="/maps/contrib/"], button[data-href*="/maps/contrib/"]');
+    if (!n) return null;
+    const t = norm(n.getAttribute("aria-label") || n.textContent).replace(/^photo of\s+/i, "");
+    return t || null;
+  }
+  function textOf(n) { return n ? (norm(n.textContent) || null) : null; }
+  // Longest leaf-ish text among `nodes`, skipping the owner-response subtree.
+  function longestText(nodes, ownerRoot) {
+    let best = "";
+    for (const n of nodes) {
+      if (ownerRoot && ownerRoot.contains(n)) continue;
+      if (n.childElementCount > 2) continue;
+      const t = norm(n.textContent);
+      if (/^response from the owner/i.test(t)) continue;
+      if (t.length > best.length) best = t;
+    }
+    return best || null;
+  }
+
+  // Ordered strategies per field: first non-empty wins. Attribute/ARIA/text
+  // first, Google's rotating class names only as a last resort. Edit here if
+  // Google changes their markup.
+  const STRATEGIES = {
+    rating: [
+      (b) => ariaStars(b, '[role="img"][aria-label]'),
+      (b) => ariaStars(b, "[aria-label]"),
+    ],
+    author: [
+      (b) => cleanName(b.getAttribute("aria-label")),
+      (b) => photoOf(b),
+      (b) => contribName(b),
+      (b) => textOf(b.querySelector(".d4r55")), // class fallback
+    ],
+    date: [
+      (b, ctx) => firstRelAge(b, ctx.ownerRoot),
+    ],
+    text: [
+      (b, ctx) => longestText(b.querySelectorAll("[lang]"), ctx.ownerRoot),
+      (b, ctx) => longestText(b.querySelectorAll(".wiI7pd"), ctx.ownerRoot), // class fallback
+    ],
+    truncated: [
+      (b, ctx) => {
+        const btn = b.querySelector('button[aria-label="See more" i], [aria-label="See more" i], [jsaction*="expandReview"]');
+        return !!(btn && (!ctx.ownerRoot || !ctx.ownerRoot.contains(btn)));
+      },
+    ],
+  };
+
+  function firstHit(block, strategies, ctx) {
+    for (const fn of strategies) {
+      try { const v = fn(block, ctx || {}); if (v != null && v !== "") return v; } catch (_) { /* try next */ }
+    }
+    return null;
+  }
+
+  // Parse the copied HTML into editable review candidates. Blocks are anchored
+  // on the stable [data-review-id] (also our externalReviewId for dedupe).
+  function parseGoogleReviewsHtml(html) {
+    const doc = new DOMParser().parseFromString(html || "", "text/html");
+    const blocks = [];
+    const seen = new Set();
+    for (const node of doc.querySelectorAll("[data-review-id]")) {
+      const id = node.getAttribute("data-review-id");
+      if (!id || seen.has(id) || hasAncestorWithReviewId(node, id)) continue;
+      seen.add(id);
+      blocks.push(node);
+    }
+    return blocks.map((block) => {
+      const ownerRoot = findOwnerRoot(block);
+      const ctx = { ownerRoot };
+      const rating = firstHit(block, STRATEGIES.rating, ctx);
+      const author = firstHit(block, STRATEGIES.author, ctx) || "";
+      const reviewedAt = relativeAgeToDate(firstHit(block, STRATEGIES.date, ctx));
+      const text = norm(firstHit(block, STRATEGIES.text, ctx) || "");
+      const truncated = firstHit(block, STRATEGIES.truncated, ctx) || false;
+      return {
+        externalReviewId: block.getAttribute("data-review-id"),
+        author,
+        rating: rating || null,
+        reviewedAt: reviewedAt ? reviewedAt.toISOString() : "",
+        text,
+        truncated,
+        ownerResponse: extractOwnerResponse(block, ownerRoot),
+        flags: { missingRating: !(rating >= 1 && rating <= 5), missingText: !text },
+      };
+    });
+  }
+
+  // Render the parse-health banner + an editable preview card per candidate.
+  // Returns an array of row handles the import submit reads edited values from.
+  function renderHtmlPreview(healthBox, previewWrap, list) {
+    healthBox.replaceChildren();
+    previewWrap.replaceChildren();
+    const total = list.length;
+
+    if (total === 0) {
+      healthBox.append(el("div", { class: "card", style: "border-color:var(--danger)" },
+        el("div", { style: "color:var(--danger);font-weight:600", text: "No reviews found in the pasted HTML" }),
+        el("div", { class: "muted", style: "font-size:12px;margin-top:4px",
+          text: "Make sure you copied a container that includes review elements (they carry a data-review-id). If you did, Google may have changed their markup and the parser selectors need updating." })));
+      return [];
+    }
+
+    const missingRating = list.filter((c) => c.flags.missingRating).length;
+    const missingText = list.filter((c) => c.flags.missingText).length;
+    const bits = [`Parsed ${total} review${total === 1 ? "" : "s"}`];
+    if (missingRating) bits.push(`${missingRating} missing rating`);
+    if (missingText) bits.push(`${missingText} without text`); // rating-only reviews are valid
+    // A rating that can't be read is a genuine parse failure; missing text is a
+    // legitimate state (rating-only reviews), so it never triggers this warning.
+    const highMiss = missingRating > total / 2;
+    healthBox.append(el("div", { class: "card", style: highMiss ? "border-color:var(--warn)" : "" },
+      el("div", { style: "font-weight:600", text: bits.join(" · ") }),
+      highMiss ? el("div", { class: "muted", style: "font-size:12px;margin-top:4px",
+        text: "Many rows are missing a rating — Google's layout may have changed. Check each row before importing." }) : null,
+      el("div", { class: "muted", style: "font-size:12px;margin-top:4px",
+        text: "Ratings are pre-filled from the HTML but editable. Rating-only reviews (no text) can be imported too. Uncheck any row you don't want." })));
+
+    const rows = [];
+    for (const cand of list) {
+      const check = el("input", { type: "checkbox" }); check.checked = true;
+      const nameIn2 = el("input", { type: "text" }); nameIn2.value = cand.author || "";
+      const ratingSel = el("select", {}, el("option", { value: "" }, "—"),
+        ...[5, 4, 3, 2, 1].map((n) => el("option", { value: n }, `${n}`)));
+      ratingSel.value = cand.rating ? String(cand.rating) : "";
+      const dateIn2 = el("input", { type: "date" }); dateIn2.value = cand.reviewedAt ? cand.reviewedAt.slice(0, 10) : "";
+      const textIn2 = el("textarea", { style: "min-height:60px" }); textIn2.value = cand.text || "";
+
+      const badges = [];
+      if (cand.flags.missingRating) badges.push(el("span", { class: "badge queued", text: "needs rating" }));
+      if (cand.flags.missingText) badges.push(el("span", { class: "badge off", text: "no text" }));
+      if (cand.truncated) badges.push(el("span", { class: "badge queued", text: "truncated" }));
+      if (cand.ownerResponse) badges.push(el("span", { class: "badge on", text: "has owner reply" }));
+
+      const kids = [
+        el("div", { style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap" },
+          check,
+          el("div", { style: "flex:1;min-width:140px" }, nameIn2),
+          el("div", { style: "width:64px" }, ratingSel),
+          el("div", { style: "width:150px" }, dateIn2),
+          ...badges),
+        field("Review text", textIn2, cand.truncated
+          ? "Truncated in the copy — click More in Google before copying, or finish the text here."
+          : null),
+      ];
+
+      let ownerIn2 = null, ownerDateIn2 = null;
+      if (cand.ownerResponse) {
+        ownerIn2 = el("textarea", { style: "min-height:50px" }); ownerIn2.value = cand.ownerResponse.text || "";
+        ownerDateIn2 = el("input", { type: "date" });
+        ownerDateIn2.value = cand.ownerResponse.postedAt ? cand.ownerResponse.postedAt.slice(0, 10) : "";
+        kids.push(field("Owner response (already posted)", ownerIn2,
+          "Preserved verbatim and marked already-posted; never overwritten by AI."));
+        kids.push(field("Owner response date", ownerDateIn2));
+      }
+
+      previewWrap.append(el("div", { class: "card" }, ...kids));
+      rows.push({ cand, check, name: nameIn2, rating: ratingSel, date: dateIn2, text: textIn2, owner: ownerIn2, ownerDate: ownerDateIn2 });
+    }
+    return rows;
+  }
+
+  // Import modal: single manual review (with optional existing owner response),
+  // a "Paste HTML from Google" importer, OR a bulk JSON paste. The operator
+  // never touches the DB directly.
+  function importReviews() {
+    const pid = state.projectId;
+    const err = el("div", { class: "err" });
+
+    const nameIn = el("input", { type: "text" });
+    const ratingIn = el("select", {}, ...[5, 4, 3, 2, 1].map((n) => el("option", { value: n }, `${n}`)));
+    const dateIn = el("input", { type: "date" });
+    const textIn = el("textarea", {});
+    const ownerIn = el("textarea", {});
+    const ownerDateIn = el("input", { type: "date" });
+    const singleBox = el("div", {},
+      field("Reviewer name", nameIn),
+      field("Rating", ratingIn),
+      field("Review date", dateIn),
+      field("Review text", textIn),
+      field("Existing owner response (optional)", ownerIn,
+        "If this review was already replied to on Google, paste the response here. It is recorded as already-posted and never overwritten by AI."),
+      field("Owner response date (optional)", ownerDateIn));
+
+    const bulkIn = el("textarea", {});
+    const bulkBox = el("div", { hidden: "" },
+      field("Reviews JSON", bulkIn,
+        'Paste an array of review objects, or { "reviews": [ ... ] }. Each may include an optional "ownerResponse".'));
+
+    // Paste-HTML-from-Google mode: parse client-side, preview + edit, then import
+    // via the same bulk endpoint. `htmlRows` holds the editable row handles.
+    const htmlIn = el("textarea", { placeholder: "Paste the copied HTML here" });
+    const parseBtn = el("button", { type: "button", class: "sm", text: "Parse" });
+    const healthBox = el("div", {});
+    const previewWrap = el("div", {});
+    let htmlRows = [];
+    const htmlBox = el("div", { hidden: "" },
+      field("Copied HTML from Google",
+        el("div", {}, htmlIn, el("div", { style: "margin-top:6px" }, parseBtn)),
+        "In Google/Maps reviews, open DevTools, right-click the reviews container, Copy > Copy element, and paste it here. Click More on long reviews before copying so their full text is included."),
+      healthBox, previewWrap);
+    parseBtn.addEventListener("click", () => {
+      err.textContent = "";
+      try { htmlRows = renderHtmlPreview(healthBox, previewWrap, parseGoogleReviewsHtml(htmlIn.value)); }
+      catch (ex) { err.textContent = "Could not parse HTML: " + (ex.message || ex); }
+    });
+
+    const modeSel = el("select", {
+      onchange: () => {
+        const m = modeSel.value;
+        singleBox.hidden = m !== "single";
+        htmlBox.hidden = m !== "html";
+        bulkBox.hidden = m !== "bulk";
+      },
+    }, el("option", { value: "single" }, "Single review"),
+       el("option", { value: "html" }, "Paste HTML from Google"),
+       el("option", { value: "bulk" }, "Bulk JSON paste"));
+
+    const submitBtn = el("button", { class: "primary", type: "submit", text: "Import" });
+    const form = el("form", {},
+      field("Mode", modeSel), singleBox, htmlBox, bulkBox, err,
+      el("div", { class: "actions" },
+        el("button", { type: "button", text: "Cancel", onclick: () => ov.remove() }),
+        submitBtn));
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      submitBtn.disabled = true;
+      try {
+        let body;
+        if (modeSel.value === "bulk") {
+          let parsed;
+          try { parsed = JSON.parse(bulkIn.value); }
+          catch { throw new Error("Invalid JSON"); }
+          // Backend accepts { reviews:[...] } or a single object — wrap a bare array.
+          body = Array.isArray(parsed) ? { reviews: parsed } : parsed;
+        } else if (modeSel.value === "html") {
+          const reviews = [];
+          for (const row of htmlRows) {
+            if (!row.check.checked) continue;
+            const name = row.name.value.trim();
+            const rating = Number(row.rating.value);
+            const text = row.text.value.trim();
+            if (!name) throw new Error("A selected review is missing a reviewer name");
+            if (!(rating >= 1 && rating <= 5)) throw new Error(`"${name}" needs a rating (1–5)`);
+            // Rating-only reviews (no text) are allowed — the backend accepts an
+            // empty string and the AI drafts a reply from the star rating.
+            const item = { author: { name }, rating, text, source: "google" };
+            if (row.cand.externalReviewId) item.externalReviewId = row.cand.externalReviewId;
+            if (row.date.value) item.reviewedAt = new Date(row.date.value).toISOString();
+            if (row.owner && row.owner.value.trim()) {
+              item.ownerResponse = { text: row.owner.value.trim() };
+              if (row.ownerDate && row.ownerDate.value) item.ownerResponse.postedAt = new Date(row.ownerDate.value).toISOString();
+            }
+            reviews.push(item);
+          }
+          if (!reviews.length) throw new Error("No reviews selected — paste HTML and click Parse first");
+          body = { reviews };
+        } else {
+          if (!nameIn.value.trim()) throw new Error("Reviewer name is required");
+          // Review text is optional — a rating-only review is valid.
+          body = { author: { name: nameIn.value.trim() }, rating: Number(ratingIn.value), text: textIn.value.trim() };
+          if (dateIn.value) body.reviewedAt = new Date(dateIn.value).toISOString();
+          if (ownerIn.value.trim()) {
+            body.ownerResponse = { text: ownerIn.value.trim() };
+            if (ownerDateIn.value) body.ownerResponse.postedAt = new Date(ownerDateIn.value).toISOString();
+          }
+        }
+        const res = await api(`/admin/api/projects/${pid}/reviews`, { method: "POST", body });
+        ov.remove();
+        const nc = (res.created || []).length, nd = (res.duplicates || []).length;
+        alert(`${nc} imported, ${nd} duplicate${nd === 1 ? "" : "s"} skipped`);
+        refreshReviewList();
+      } catch (ex) { err.textContent = ex.message || "Import failed"; submitBtn.disabled = false; }
+    });
+
+    const ov = el("div", { class: "overlay", onclick: (e) => e.target === ov && ov.remove() },
+      el("div", { class: "modal" }, el("h2", {}, "Import reviews"), form));
+    $("#modal-root").append(ov);
+    nameIn.focus();
+  }
+
+  // ---------- Approved replies (per-project + global posting queues) ----------
+  function renderApproved(col) {
+    col.append(
+      el("div", { class: "col-head" }, el("span", { class: "title", text: "Approved replies · ready to post" })),
+      el("div", { id: "approved-wrap" }));
+    loadApproved();
+  }
+
+  async function loadApproved() {
+    const wrap = $("#approved-wrap");
+    if (!wrap) return;
+    wrap.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
+    let reviews;
+    try { reviews = await api(`/admin/api/projects/${state.projectId}/replies/approved`); }
+    catch { wrap.replaceChildren(el("div", { class: "empty", text: "Failed to load." })); return; }
+    renderApprovedTable(wrap, reviews, false);
+  }
+
+  async function selectGlobalApproved() {
+    state.view = "global";
+    state.projectId = null;
+    state.data = null;
+    await loadProjects();
+    $("#detail-col").replaceChildren();
+    $("#mid-col").replaceChildren(
+      el("div", { class: "card" },
+        el("h3", {}, "All approved replies"),
+        el("div", { class: "sub muted", text: "Cross-project queue — approved replies awaiting posting to Google." })),
+      el("div", { class: "col-head" }, el("span", { class: "title", text: "Ready to post" })),
+      el("div", { id: "approved-wrap" }));
+    loadGlobalApproved();
+  }
+
+  async function loadGlobalApproved() {
+    const wrap = $("#approved-wrap");
+    if (!wrap) return;
+    wrap.replaceChildren(el("div", { class: "empty", text: "Loading…" }));
+    let reviews;
+    try { reviews = await api("/admin/api/replies/approved"); }
+    catch { wrap.replaceChildren(el("div", { class: "empty", text: "Failed to load." })); return; }
+    renderApprovedTable(wrap, reviews, true);
+  }
+
+  // Shared table for both queues; `global` adds the client-name column and picks
+  // the right refresh after a row is marked posted.
+  function renderApprovedTable(wrap, reviews, global) {
+    if (!reviews.length) { wrap.replaceChildren(el("div", { class: "empty", text: "Nothing awaiting posting." })); return; }
+    const tbody = el("tbody");
+    for (const r of reviews) {
+      const cells = [];
+      if (global) cells.push(el("td", { text: r.projectName || "—" }));
+      cells.push(
+        el("td", { text: r.author?.name || "—" }),
+        el("td", { text: `${r.rating}/5` }),
+        el("td", {}, el("div", { style: "max-width:220px", text: r.text || "" })),
+        el("td", {}, el("div", { style: "max-width:260px", text: r.reply?.body || "" })),
+        el("td", { text: fmtDate(r.approval?.approvedAt) }),
+        el("td", {}, el("span", { class: badgeFor(r.publishing?.status), text: r.publishing?.status || "—" })),
+        el("td", {},
+          el("button", { class: "sm", text: "Copy reply", onclick: () => copyReply(r.reply?.body || "") }), " ",
+          el("button", { class: "sm primary", text: "Mark posted", onclick: () => markPostedRow(r, global) })));
+      tbody.append(el("tr", {}, ...cells));
+    }
+    const head = el("tr", {});
+    if (global) head.append(el("th", {}, "Client"));
+    head.append(
+      el("th", {}, "Reviewer"), el("th", {}, "Rating"), el("th", {}, "Review"),
+      el("th", {}, "Approved reply"), el("th", {}, "Approved"), el("th", {}, "Posting"), el("th", {}, ""));
+    wrap.replaceChildren(el("table", {}, el("thead", {}, head), tbody));
+  }
+
+  function copyReply(text) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+
+  async function markPostedRow(r, global) {
+    const note = prompt("Optional note (e.g. 'Posted on Google by hand'):", "");
+    if (note === null) return; // cancelled
+    try {
+      await api(`/admin/api/reviews/${r._id}/mark-posted`, { method: "POST", body: note.trim() ? { note: note.trim() } : {} });
+      if (global) loadGlobalApproved(); else loadApproved();
+    } catch (ex) { alert(ex.message || "Failed to mark posted"); }
   }
 
   // ---------- Detail column ----------

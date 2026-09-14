@@ -115,3 +115,6 @@ export const formSubmitSchema = z.object({
 });
 
 export type FormSubmitInput = z.infer<typeof formSubmitSchema>;
+
+// --- Reviews (client + operator) ---
+export * from "./reviews.js";

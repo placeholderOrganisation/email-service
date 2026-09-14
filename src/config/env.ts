@@ -45,6 +45,14 @@ export const env = {
   // Shared secret for the /admin dashboard + its JSON API. Unset = admin UI disabled.
   adminToken: process.env.ADMIN_TOKEN ?? "",
 
+  // OpenAI powers review analysis + reply drafting. With no apiKey the AI
+  // service falls back to a deterministic mock (dev/tests run token-free).
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY ?? "",
+    model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+    baseUrl: process.env.OPENAI_BASE_URL || undefined,
+  },
+
   // Ordered by preference: SES primary, Brevo failover. The provider layer
   // filters out any that aren't fully configured, so SES-only just works.
   smtp: {

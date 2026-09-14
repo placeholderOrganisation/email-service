@@ -3,6 +3,10 @@
  *
  *   npm run create-project -- --name "Project X" --from "projectx@minteksoftware.com"
  *   npm run create-project -- --name "Project X" --from "projectx@minteksoftware.com" --from-name "Project X"
+ *
+ * --from is optional: review-only clients never send email, so they need no sender.
+ *
+ *   npm run create-project -- --name "Review Only Co"
  */
 import { connectDb, disconnectDb } from "../db/connect.js";
 import { Project } from "../models/Project.js";
@@ -27,9 +31,9 @@ async function main() {
   const fromAddress = args.from;
   const fromName = args["from-name"] ?? "";
 
-  if (!name || !fromAddress) {
+  if (!name) {
     console.error(
-      'Usage: npm run create-project -- --name "Project X" --from "projectx@minteksoftware.com" [--from-name "Project X"]',
+      'Usage: npm run create-project -- --name "Project X" [--from "projectx@minteksoftware.com"] [--from-name "Project X"]',
     );
     process.exit(1);
   }
@@ -39,7 +43,8 @@ async function main() {
     const key = generateApiKey();
     const project = await Project.create({
       name,
-      fromAddress,
+      // Omit when review-only: the schema leaves fromAddress optional.
+      ...(fromAddress ? { fromAddress } : {}),
       fromName,
       apiKeyHash: key.hash,
       apiKeyLast4: key.last4,
@@ -48,7 +53,15 @@ async function main() {
     console.log("\n✅ Project created\n");
     console.log(`   id:     ${project._id}`);
     console.log(`   name:   ${project.name}`);
-    console.log(`   from:   ${fromName ? `${fromName} <${fromAddress}>` : fromAddress}`);
+    console.log(
+      `   from:   ${
+        fromAddress
+          ? fromName
+            ? `${fromName} <${fromAddress}>`
+            : fromAddress
+          : "(review-only — no sender)"
+      }`,
+    );
     console.log(`\n   API key (shown once — store it now):\n`);
     console.log(`   ${key.plaintext}\n`);
   } finally {
