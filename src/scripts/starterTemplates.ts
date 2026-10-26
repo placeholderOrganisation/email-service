@@ -64,10 +64,12 @@ This link expires in {{expiresIn}}. If you didn't request this, no action is nee
 
 // --- Booking emails (calendly-clone / BookMe) ---
 // Customer: customerName, serviceName, staffName, businessName, when, timezone,
-//           duration, notes, lead, rebookUrl
+//           duration, notes, meeting, manageUrl, lead, rebookUrl, previousWhen
 // Staff/owner: recipientName, customerName, customerEmail, customerPhone,
 //              serviceName, staffName, businessName, when, timezone, duration,
-//              notes, dashboardUrl
+//              notes, meeting, dashboardUrl, previousWhen
+// `meeting` is a pre-rendered Markdown line ("**Join online:** [Google Meet](…)")
+// or "" for in-person services.
 const booking: TemplateDef[] = [
   {
     name: "booking-confirmation",
@@ -82,7 +84,11 @@ Hi {{customerName}}, your appointment with **{{businessName}}** is confirmed.
 - **When:** {{when}} ({{timezone}})
 - **Duration:** {{duration}}
 
+{{meeting}}
+
 {{notes}}
+
+Need to change it? [Reschedule or cancel]({{manageUrl}})
 
 See you then!`,
   },
@@ -100,6 +106,8 @@ Hi {{recipientName}}, **{{customerName}}** just booked **{{serviceName}}** at **
 - **Customer:** {{customerName}}
 - **Email:** {{customerEmail}}
 - **Phone:** {{customerPhone}}
+
+{{meeting}}
 
 {{notes}}
 
@@ -119,7 +127,9 @@ Hi {{customerName}}, this is a friendly reminder for your upcoming appointment {
 - **With:** {{staffName}}
 - **When:** {{when}} ({{timezone}})
 
-If you can no longer make it, please get in touch so we can free up the slot.`,
+{{meeting}}
+
+Can't make it? [Reschedule or cancel]({{manageUrl}})`,
   },
   {
     name: "booking-cancellation",
@@ -132,6 +142,58 @@ Hi {{customerName}}, your **{{serviceName}}** with {{businessName}} scheduled fo
 Changed your mind? You can book a new time here:
 
 [Book again]({{rebookUrl}})`,
+  },
+  {
+    name: "booking-staff-cancellation",
+    subject: "Cancelled by customer: {{serviceName}} on {{when}}",
+    format: "markdown",
+    body: `# Booking cancelled
+
+Hi {{recipientName}}, **{{customerName}}** cancelled their **{{serviceName}}** at **{{businessName}}**.
+
+- **Was:** {{when}} ({{timezone}})
+- **With:** {{staffName}}
+- **Customer:** {{customerName}} ({{customerEmail}})
+
+The slot is open again for new bookings.
+
+[Open dashboard]({{dashboardUrl}})`,
+  },
+  {
+    name: "booking-rescheduled",
+    subject: "Rescheduled: {{serviceName}} is now {{when}}",
+    format: "markdown",
+    body: `# Your booking has moved
+
+Hi {{customerName}}, your appointment with **{{businessName}}** has been rescheduled.
+
+- **Service:** {{serviceName}}
+- **With:** {{staffName}}
+- **New time:** {{when}} ({{timezone}})
+- **Previously:** {{previousWhen}}
+
+{{meeting}}
+
+Need another change? [Reschedule or cancel]({{manageUrl}})`,
+  },
+  {
+    name: "booking-staff-rescheduled",
+    subject: "Rescheduled: {{serviceName}} with {{customerName}} is now {{when}}",
+    format: "markdown",
+    body: `# Booking rescheduled
+
+Hi {{recipientName}}, **{{customerName}}** moved their **{{serviceName}}** at **{{businessName}}**.
+
+- **New time:** {{when}} ({{timezone}})
+- **Previously:** {{previousWhen}}
+- **With:** {{staffName}}
+- **Customer:** {{customerName}} ({{customerEmail}})
+
+{{meeting}}
+
+[Open dashboard]({{dashboardUrl}})
+
+Reply to this email to reach the customer directly.`,
   },
 ];
 

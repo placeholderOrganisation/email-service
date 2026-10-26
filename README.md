@@ -87,10 +87,15 @@ Starter templates (`account` · `booking` · `order`):
 | `welcome` | `name`, `product`, `actionUrl` |
 | `verify-email` | `name`, `product`, `verifyUrl`, `expiresIn` |
 | `password-reset` | `name`, `product`, `resetUrl`, `expiresIn` |
-| `booking-confirmation` | `customerName`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `duration`, `notes` |
-| `booking-staff-confirmation` | `recipientName`, `customerName`, `customerEmail`, `customerPhone`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `duration`, `notes`, `dashboardUrl` |
-| `booking-reminder` | `customerName`, `serviceName`, `staffName`, `when`, `timezone`, `lead` |
+| `booking-confirmation` | `customerName`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `duration`, `notes`, `meeting`, `manageUrl` |
+| `booking-staff-confirmation` | `recipientName`, `customerName`, `customerEmail`, `customerPhone`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `duration`, `notes`, `meeting`, `dashboardUrl` |
+| `booking-reminder` | `customerName`, `serviceName`, `staffName`, `when`, `timezone`, `lead`, `meeting`, `manageUrl` |
 | `booking-cancellation` | `customerName`, `serviceName`, `businessName`, `when`, `timezone`, `rebookUrl` |
+| `booking-staff-cancellation` | `recipientName`, `customerName`, `customerEmail`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `dashboardUrl` |
+| `booking-rescheduled` | `customerName`, `serviceName`, `staffName`, `businessName`, `when`, `previousWhen`, `timezone`, `meeting`, `manageUrl` |
+| `booking-staff-rescheduled` | `recipientName`, `customerName`, `customerEmail`, `serviceName`, `staffName`, `businessName`, `when`, `previousWhen`, `timezone`, `meeting`, `dashboardUrl` |
+
+`meeting` is a pre-rendered Markdown line with the Google Meet link, or empty for in-person services.
 | `order-confirmation` | `customerName`, `orderNumber`, `itemsList`, `total`, `shippingAddress` |
 | `receipt` | `customerName`, `orderNumber`, `orderDate`, `itemsList`, `subtotal`, `tax`, `shipping`, `total`, `paymentMethod` |
 | `shipping-update` | `customerName`, `orderNumber`, `carrier`, `trackingNumber`, `trackUrl`, `eta` |
