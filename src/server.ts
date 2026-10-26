@@ -3,6 +3,7 @@ import { env } from "./config/env.js";
 import { connectDb, disconnectDb } from "./db/connect.js";
 import { closeProviders } from "./providers/index.js";
 import { startWorker, stopWorker } from "./worker/emailWorker.js";
+import { startReviewSyncWorker, stopReviewSyncWorker } from "./worker/reviewSyncWorker.js";
 
 async function main() {
   await connectDb();
@@ -11,14 +12,16 @@ async function main() {
     console.log(`[api] listening on http://localhost:${env.port}`);
   });
   startWorker();
+  startReviewSyncWorker();
 
   // Graceful shutdown: stop accepting requests, let the in-flight send batch
   // finish, then close SMTP pools + Mongo. Any row still `processing` is safely
-  // reclaimed on the next boot via the stale-lock check.
+  // reclaimed on the next boot via the stale-lock check. An interrupted review
+  // sync releases its lock and leaves lastSyncedAt unchanged.
   async function shutdown(signal: string) {
     console.log(`[api] ${signal} received, shutting down`);
     server.close();
-    await stopWorker();
+    await Promise.all([stopWorker(), stopReviewSyncWorker()]);
     await closeProviders();
     await disconnectDb();
     process.exit(0);

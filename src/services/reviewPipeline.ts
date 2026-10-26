@@ -1,10 +1,18 @@
 import type { Types } from "mongoose";
+import { isGoogleConfigured } from "../config/env.js";
 import { Project } from "../models/Project.js";
 import { Review, type ReviewDocument } from "../models/Review.js";
-import type { ReviewImportInput } from "../schemas/reviews.js";
+import {
+  GOOGLE_REPLY_MAX_BYTES,
+  REPLY_TOO_LONG_MESSAGE,
+  replyByteLength,
+  type ReviewImportInput,
+} from "../schemas/reviews.js";
 import { computeDedupeHash } from "../utils/reviewDedupe.js";
-import { analyzeReview, generateReply } from "./ai.js";
-import { getProvider } from "./reviewProvider.js";
+import { analyzeReview, generateReply, type AnalysisResult } from "./ai.js";
+import { getProvider, manualProvider } from "./reviewProvider.js";
+import { isGoogleConnected } from "./google/connection.js";
+import { toGoogleAppError } from "./google/errors.js";
 import { badRequest, conflict } from "../utils/errors.js";
 
 // Mongoose always initializes these nested subpaths (they carry sub-defaults),
@@ -12,7 +20,7 @@ import { badRequest, conflict } from "../utils/errors.js";
 // non-null so the pipeline can assign lifecycle fields without a sea of `!`.
 // The underlying document is untouched — nested-path assignment is still tracked
 // and persisted by Mongoose.
-type ReviewSubdocs = ReviewDocument & {
+export type ReviewSubdocs = ReviewDocument & {
   analysis: NonNullable<ReviewDocument["analysis"]>;
   reply: NonNullable<ReviewDocument["reply"]>;
   approval: NonNullable<ReviewDocument["approval"]>;
@@ -20,7 +28,7 @@ type ReviewSubdocs = ReviewDocument & {
   replyHistory: NonNullable<ReviewDocument["replyHistory"]>;
 };
 
-const withSubdocs = (doc: ReviewDocument): ReviewSubdocs => doc as ReviewSubdocs;
+export const withSubdocs = (doc: ReviewDocument): ReviewSubdocs => doc as ReviewSubdocs;
 
 /**
  * Idempotently import one review into a project. If a review with the same
@@ -103,29 +111,8 @@ export async function processReview(reviewDoc: ReviewDocument): Promise<ReviewDo
   const hasImportedReply = doc.reply?.source === "imported";
 
   // --- Analysis ---
-  doc.analysis.status = "processing";
-  await doc.save();
-
-  let analysis: Awaited<ReturnType<typeof analyzeReview>> | undefined;
-  try {
-    analysis = await analyzeReview({
-      rating: doc.rating,
-      text: doc.text,
-      author: doc.author,
-      language: doc.language,
-    });
-    doc.analysis.status = "ready";
-    doc.analysis.sentiment = analysis.sentiment;
-    doc.analysis.topics = analysis.topics;
-    doc.analysis.summary = analysis.summary;
-    doc.analysis.suggestedTone = analysis.suggestedTone;
-    doc.analysis.model = analysis.model;
-    doc.analysis.generatedAt = analysis.generatedAt;
-    doc.analysis.error = undefined;
-  } catch (err) {
-    doc.analysis.status = "failed";
-    doc.analysis.error = errMessage(err);
-    doc.analysis.attempts = (doc.analysis.attempts ?? 0) + 1;
+  const analysis = await analyzeInto(doc);
+  if (!analysis) {
     await doc.save();
     return doc;
   }
@@ -169,6 +156,47 @@ export async function processReview(reviewDoc: ReviewDocument): Promise<ReviewDo
 
   await doc.save();
   return doc;
+}
+
+/**
+ * Re-runs ONLY the analysis (never touches the reply). Used by the Google sync
+ * when a review's text/rating was edited on Google. Failures are captured on
+ * the doc, not thrown.
+ */
+export async function reanalyzeReview(reviewDoc: ReviewDocument): Promise<ReviewDocument> {
+  const doc = withSubdocs(reviewDoc);
+  await analyzeInto(doc);
+  await doc.save();
+  return doc;
+}
+
+/** Runs analysis into `doc.analysis`. Returns the result, or undefined on failure (recorded on the doc). */
+async function analyzeInto(doc: ReviewSubdocs): Promise<AnalysisResult | undefined> {
+  doc.analysis.status = "processing";
+  await doc.save();
+
+  try {
+    const analysis = await analyzeReview({
+      rating: doc.rating,
+      text: doc.text,
+      author: doc.author,
+      language: doc.language,
+    });
+    doc.analysis.status = "ready";
+    doc.analysis.sentiment = analysis.sentiment;
+    doc.analysis.topics = analysis.topics;
+    doc.analysis.summary = analysis.summary;
+    doc.analysis.suggestedTone = analysis.suggestedTone;
+    doc.analysis.model = analysis.model;
+    doc.analysis.generatedAt = analysis.generatedAt;
+    doc.analysis.error = undefined;
+    return analysis;
+  } catch (err) {
+    doc.analysis.status = "failed";
+    doc.analysis.error = errMessage(err);
+    doc.analysis.attempts = (doc.analysis.attempts ?? 0) + 1;
+    return undefined;
+  }
 }
 
 /**
@@ -259,6 +287,9 @@ export async function approveReply(
   if (doc.reply.status !== "draft" || !doc.reply.body?.trim()) {
     throw badRequest("A non-empty draft reply is required before approval");
   }
+  if (replyByteLength(doc.reply.body) > GOOGLE_REPLY_MAX_BYTES) {
+    throw badRequest(REPLY_TOO_LONG_MESSAGE);
+  }
   doc.approval.status = "approved";
   doc.approval.approvedAt = new Date();
   doc.approval.approvedBy = by;
@@ -267,9 +298,10 @@ export async function approveReply(
 }
 
 /**
- * Operator marks an approved reply as posted. Requires prior approval; idempotent
- * if already posted. Runs the project's review provider (manual = no-op for MVP)
- * and records how/when it was published.
+ * Operator marks an approved reply as posted (they posted it by hand). Requires
+ * prior approval; idempotent if already posted. Always pure record-keeping via
+ * the manual provider — it must never call Google, since it is the fallback for
+ * reviews not linked to the API. Use publishReplyToGoogle to post via the API.
  */
 export async function markPosted(
   reviewDoc: ReviewDocument,
@@ -283,15 +315,11 @@ export async function markPosted(
     throw badRequest("Reply must be approved before it can be marked posted");
   }
 
-  const project = await Project.findById(doc.projectId);
-  const provider = project ? getProvider(project) : undefined;
-  const result = provider
-    ? await provider.publishReply({
-        reviewId: doc._id.toString(),
-        externalReviewId: doc.externalReviewId ?? undefined,
-        body: doc.reply.body ?? "",
-      })
-    : { method: "manual" as const };
+  const result = await manualProvider.publishReply({
+    reviewId: doc._id.toString(),
+    externalReviewId: doc.externalReviewId ?? undefined,
+    body: doc.reply.body ?? "",
+  });
 
   doc.publishing.status = "posted";
   doc.publishing.postedAt = new Date();
@@ -299,6 +327,69 @@ export async function markPosted(
   doc.publishing.method = result.method;
   if (note !== undefined) doc.publishing.note = note;
   if (result.externalResponseId) doc.publishing.externalResponseId = result.externalResponseId;
+  await doc.save();
+  return doc;
+}
+
+/**
+ * Operator-triggered "Post to Google": publishes the approved reply through the
+ * Business Profile API. Preconditions are checked before any network call. On
+ * failure the review stays unpublished with `publishing.error` + `attempts`
+ * recorded, and a clean AppError is thrown (409 reconnect-required, 502 Google
+ * rejected/unavailable).
+ */
+export async function publishReplyToGoogle(
+  reviewDoc: ReviewDocument,
+  { by }: { by: string },
+): Promise<ReviewDocument> {
+  const doc = withSubdocs(reviewDoc);
+  if (doc.publishing.status === "posted") {
+    throw conflict("Reply already posted");
+  }
+  if (doc.approval.status !== "approved") {
+    throw badRequest("Reply must be approved before it can be posted to Google");
+  }
+  const reviewName = doc.google?.reviewName;
+  if (!reviewName) {
+    throw conflict("Not linked to Google yet - run a sync or use Mark posted");
+  }
+  const project = await Project.findById(doc.projectId);
+  if (!project?.google?.locationName) {
+    throw conflict("Project is not linked to a Google location - link it or use Mark posted");
+  }
+  if (!isGoogleConfigured()) {
+    throw badRequest("Google integration is not configured on this server");
+  }
+  if (!(await isGoogleConnected())) {
+    throw conflict("Google is not connected - connect it in the dashboard");
+  }
+  const body = doc.reply.body?.trim() ?? "";
+  if (!body) throw badRequest("A non-empty approved reply is required");
+  if (replyByteLength(body) > GOOGLE_REPLY_MAX_BYTES) {
+    throw badRequest(REPLY_TOO_LONG_MESSAGE);
+  }
+
+  let result;
+  try {
+    result = await getProvider(project).publishReply({
+      reviewId: doc._id.toString(),
+      externalReviewId: doc.externalReviewId ?? undefined,
+      googleReviewName: reviewName,
+      body,
+    });
+  } catch (err) {
+    doc.publishing.error = errMessage(err).slice(0, 1000);
+    doc.publishing.attempts = (doc.publishing.attempts ?? 0) + 1;
+    await doc.save();
+    throw toGoogleAppError(err, "Google rejected the reply: ");
+  }
+
+  doc.publishing.status = "posted";
+  doc.publishing.method = result.method;
+  doc.publishing.postedAt = new Date();
+  doc.publishing.postedBy = by;
+  doc.publishing.error = undefined;
+  if (result.replyUpdateTime) doc.set("google.replyUpdateTime", result.replyUpdateTime);
   await doc.save();
   return doc;
 }
@@ -311,7 +402,7 @@ export async function markPosted(
  * (publishing.status is "posted", not "unpublished") and marks the reply as
  * "imported" so `processReview` never regenerates it.
  */
-function ownerResponseFields(text: string, postedAt?: Date) {
+export function ownerResponseFields(text: string, postedAt?: Date) {
   const when = postedAt ?? new Date();
   return {
     reply: {
@@ -336,7 +427,7 @@ function ownerResponseFields(text: string, postedAt?: Date) {
 }
 
 /** Push the current reply body (if any) onto the audit trail before overwriting. */
-function archivePriorReply(doc: ReviewSubdocs, reason: string): void {
+export function archivePriorReply(doc: ReviewSubdocs, reason: string): void {
   if (doc.reply?.body?.trim()) {
     doc.replyHistory.push({
       body: doc.reply.body,
@@ -348,7 +439,7 @@ function archivePriorReply(doc: ReviewSubdocs, reason: string): void {
   }
 }
 
-function resetApproval(doc: ReviewSubdocs): void {
+export function resetApproval(doc: ReviewSubdocs): void {
   doc.approval.status = "awaiting_client";
   doc.approval.approvedAt = undefined;
   doc.approval.approvedBy = undefined;

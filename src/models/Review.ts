@@ -27,8 +27,18 @@ const reviewSchema = new Schema(
 
     // --- INTERNAL (operator-only) ---
     source: { type: String, enum: ["manual", "google"], default: "manual" },
-    externalReviewId: { type: String }, // future Google review id
+    // API-synced reviews: the Business Profile API reviewId. HTML-imported
+    // reviews: Google Maps' `data-review-id`, a DIFFERENT identifier that must
+    // never be used for API calls (use google.reviewName).
+    externalReviewId: { type: String },
     dedupeHash: { type: String, required: true }, // MVP dedup key
+
+    // Business Profile API linkage. Set ONLY by the API sync (services/google/sync.ts).
+    google: {
+      reviewName: { type: String }, // "accounts/A/locations/L/reviews/R"
+      updateTime: { type: Date },
+      replyUpdateTime: { type: Date },
+    },
 
     // --- CLIENT-VISIBLE review content (stored verbatim, never edited by AI) ---
     author: {
@@ -82,6 +92,9 @@ const reviewSchema = new Schema(
       method: { type: String, enum: ["manual", "google_api"], default: "manual" },
       note: { type: String },
       externalResponseId: { type: String },
+      // Last "Post to Google" failure (cleared on success) + how many posts failed.
+      error: { type: String },
+      attempts: { type: Number, default: 0 },
     },
 
     // --- Audit trail of prior reply versions (INTERNAL) ---
@@ -109,6 +122,11 @@ reviewSchema.index(
   { projectId: 1, externalReviewId: 1 },
   { unique: true, partialFilterExpression: { externalReviewId: { $type: "string" } } },
 );
+// One doc per Google API review per project.
+reviewSchema.index(
+  { projectId: 1, "google.reviewName": 1 },
+  { unique: true, partialFilterExpression: { "google.reviewName": { $type: "string" } } },
+);
 
 reviewSchema.set("toJSON", {
   virtuals: true,
@@ -126,7 +144,7 @@ export const Review = model("Review", reviewSchema);
 
 /**
  * Projects a review down to ONLY the fields a client may see. Never exposes
- * internal mechanics (source, externalReviewId, dedupeHash, publishing,
+ * internal mechanics (source, externalReviewId, dedupeHash, google, publishing,
  * replyHistory) or noisy operational fields (analysis.error/attempts,
  * reply.error/attempts). This is the single enforcement point for the client
  * projection — client routes must always respond through it.

@@ -32,3 +32,25 @@ export function computeDedupeHash(
   if (externalReviewId) payload += `|${normalize(externalReviewId)}`;
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
+
+/**
+ * Content-only fingerprint (author + rating + text, same normalization as
+ * computeDedupeHash) that deliberately EXCLUDES externalReviewId and projectId.
+ * Used to reconcile an API-synced Google review with a copy previously imported
+ * by hand/HTML, whose id (Maps `data-review-id`) differs from the API reviewId.
+ */
+export function computeContentFingerprint(
+  author: { name?: string | null } | undefined | null,
+  rating: number,
+  text: string | undefined | null,
+): string {
+  return crypto
+    .createHash("sha256")
+    .update(`${normalize(author?.name)}|${rating}|${normalize(text)}`)
+    .digest("hex");
+}
+
+/** Normalized author + rating key — rating-only reconciliation requires this pair be unique. */
+export function authorRatingKey(author: { name?: string | null } | undefined | null, rating: number): string {
+  return `${normalize(author?.name)}|${rating}`;
+}

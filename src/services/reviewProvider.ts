@@ -1,14 +1,19 @@
 import type { ProjectDoc } from "../models/Project.js";
+import { getGoogleClient } from "./google/client.js";
 
 export interface PublishReplyInput {
   reviewId: string;
   externalReviewId?: string;
+  // Business Profile API resource name ("accounts/A/locations/L/reviews/R").
+  // Never derived from externalReviewId — HTML imports carry a Maps id there.
+  googleReviewName?: string;
   body: string;
 }
 
 export interface PublishReplyResult {
   method: "manual" | "google_api";
   externalResponseId?: string;
+  replyUpdateTime?: Date;
 }
 
 export interface ReviewProvider {
@@ -16,9 +21,8 @@ export interface ReviewProvider {
 }
 
 /**
- * MVP provider: publishing is done by hand (operator posts the approved reply on
- * Google, then marks it posted). So `publishReply` is a no-op that just reports
- * the method used.
+ * Manual provider: the operator posts the approved reply by hand, then marks it
+ * posted. `publishReply` is a no-op that just reports the method used.
  */
 export const manualProvider: ReviewProvider = {
   async publishReply(): Promise<PublishReplyResult> {
@@ -27,15 +31,25 @@ export const manualProvider: ReviewProvider = {
 };
 
 /**
- * Selects the provider for a project. For now every project uses the manual
- * provider.
- *
- * FUTURE: this is the seam for a GoogleProvider. When Google Business Profile
- * publishing lands, branch here on the project (e.g. a connected Google account
- * / stored OAuth token) and return a `googleProvider` whose `publishReply` calls
- * the Business Profile API and returns { method: "google_api", externalResponseId }.
- * The rest of the pipeline (markPosted) already consumes the result generically.
+ * Posts the reply through the Business Profile API (PUT .../reply overwrites,
+ * so a retry after an ambiguous failure is safe). Throws GoogleApiError on failure.
  */
-export function getProvider(_project: ProjectDoc): ReviewProvider {
-  return manualProvider;
+export const googleProvider: ReviewProvider = {
+  async publishReply(input: PublishReplyInput): Promise<PublishReplyResult> {
+    if (!input.googleReviewName) throw new Error("Review is not linked to a Google review");
+    const reply = await getGoogleClient().updateReply(input.googleReviewName, input.body);
+    return {
+      method: "google_api",
+      replyUpdateTime: reply.updateTime ? new Date(reply.updateTime) : new Date(),
+    };
+  },
+};
+
+/**
+ * The provider for an explicit, operator-triggered publish: Google when the
+ * project is linked to a Business Profile location, manual otherwise.
+ * markPosted does NOT use this — it is always manual record-keeping.
+ */
+export function getProvider(project: ProjectDoc): ReviewProvider {
+  return project.google?.locationName ? googleProvider : manualProvider;
 }

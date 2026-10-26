@@ -18,6 +18,12 @@ function normalizeUrl(value: string): string {
   return withScheme.replace(/\/+$/, "");
 }
 
+function nonNegativeNumber(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 interface SmtpConfig {
   name: string;
   host: string;
@@ -53,6 +59,19 @@ export const env = {
     baseUrl: process.env.OPENAI_BASE_URL || undefined,
   },
 
+  // Google Business Profile (review sync + reply posting). One operator Google
+  // account (a Manager on every client profile) is connected via OAuth; its
+  // refresh token is stored encrypted with tokenEncryptionKey. Any of the four
+  // unset = Google features disabled (see isGoogleConfigured).
+  google: {
+    clientId: process.env.GOOGLE_OAUTH_CLIENT_ID ?? "",
+    clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET ?? "",
+    redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI ?? "",
+    tokenEncryptionKey: process.env.GOOGLE_TOKEN_ENCRYPTION_KEY ?? "",
+  },
+  // How often the in-process worker syncs Google reviews. 0 disables the scheduler.
+  reviewSyncIntervalMinutes: nonNegativeNumber(process.env.REVIEW_SYNC_INTERVAL_MINUTES, 360),
+
   // Ordered by preference: SES primary, Brevo failover. The provider layer
   // filters out any that aren't fully configured, so SES-only just works.
   smtp: {
@@ -72,5 +91,11 @@ export const env = {
     } satisfies SmtpConfig,
   },
 };
+
+/** Google features require the full OAuth client + the token encryption key. Read at call time. */
+export function isGoogleConfigured(): boolean {
+  const g = env.google;
+  return Boolean(g.clientId && g.clientSecret && g.redirectUri && g.tokenEncryptionKey);
+}
 
 export type { SmtpConfig };

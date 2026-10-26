@@ -35,9 +35,19 @@ export const reviewImportBodySchema = z.union([
   reviewImportSchema,
 ]);
 
+/** Google rejects owner-reply comments over 4096 BYTES (not characters). */
+export const GOOGLE_REPLY_MAX_BYTES = 4096;
+export const replyByteLength = (body: string): number => Buffer.byteLength(body, "utf8");
+export const REPLY_TOO_LONG_MESSAGE = `Reply is too long: Google allows at most ${GOOGLE_REPLY_MAX_BYTES} bytes (UTF-8)`;
+
 /** Edit a reply body (client or operator). */
 export const replyUpdateSchema = z.object({
-  body: z.string().trim().min(1).max(5000),
+  body: z
+    .string()
+    .trim()
+    .min(1)
+    .max(5000)
+    .refine((b) => replyByteLength(b) <= GOOGLE_REPLY_MAX_BYTES, { message: REPLY_TOO_LONG_MESSAGE }),
 });
 
 /** Mark an approved reply as posted (operator only). */

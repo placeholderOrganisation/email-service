@@ -101,6 +101,8 @@
   .modal .err { color: var(--danger); font-size: 13px; min-height: 18px; margin-top: 4px; }
   .keybox { display: flex; gap: 8px; align-items: center; }
   .keybox code { flex: 1; overflow-x: auto; white-space: nowrap; padding: 8px; }
+  .err-inline { color: var(--danger); font-size: 12px; margin-top: 4px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -119,6 +121,7 @@
   <header>
     <span class="dot" id="health-dot"></span>
     <h1>email-service admin</h1>
+    <div id="google-conn" style="display:flex;gap:6px;align-items:center"></div>
     <button id="refresh-btn">Refresh</button>
     <button id="reset-cols-btn" title="Reset column widths">Reset layout</button>
     <button id="logout-btn">Lock</button>
@@ -170,7 +173,8 @@
       el("label", {}, label), input,
       help ? el("div", { class: "muted", style: "font-size:12px;margin-top:2px", text: help }) : null);
 
-  const state = { token: localStorage.getItem("es_admin_token") || "", projectId: null, section: "emails", view: "project", data: null };
+  const state = { token: localStorage.getItem("es_admin_token") || "", projectId: null, section: "emails", view: "project", data: null,
+    google: null, projects: [], syncPoll: null };
 
   async function api(path, opts) {
     opts = opts || {};
@@ -269,14 +273,14 @@
     try {
       await api("/admin/api/projects");
       localStorage.setItem("es_admin_token", val);
-      unlock(true); loadProjects(); checkHealth();
+      unlock(true); loadProjects(); checkHealth(); loadGoogleStatus();
     } catch { $("#gate-err").textContent = "Invalid token."; }
   });
   $("#logout-btn").addEventListener("click", () => {
     localStorage.removeItem("es_admin_token"); state.token = ""; unlock(false);
   });
   $("#refresh-btn").addEventListener("click", () => {
-    loadProjects(); if (state.projectId) selectProject(state.projectId); checkHealth();
+    loadProjects(); if (state.projectId) selectProject(state.projectId); checkHealth(); loadGoogleStatus();
   });
 
   const COLS_KEY = "es_admin_cols";
@@ -364,6 +368,46 @@
     } catch { dot.className = "dot bad"; dot.title = "unreachable"; }
   }
 
+  // ---------- Google connection (header) ----------
+  // One operator Google account (Manager on every client profile). Connect runs
+  // the OAuth redirect; the server stores the refresh token encrypted.
+  async function loadGoogleStatus() {
+    const wrap = $("#google-conn");
+    let s;
+    try { s = await api("/admin/api/google/status"); }
+    catch { wrap.replaceChildren(el("span", { class: "muted", text: "Google: status unavailable" })); return; }
+    state.google = s;
+    const kids = [];
+    if (!s.configured) {
+      kids.push(el("span", { class: "badge off", title: "Set the GOOGLE_* env vars on the server", text: "Google not configured" }));
+    } else if (s.connected) {
+      kids.push(
+        el("span", { class: "badge on", title: "Connected " + fmtDate(s.connectedAt), text: "Google: " + (s.email || "connected") }),
+        el("button", { class: "sm", text: "Disconnect", onclick: disconnectGoogle }));
+    } else {
+      kids.push(
+        el("span", { class: "badge off", text: "Google not connected" }),
+        el("button", { class: "sm primary", text: "Connect Google", onclick: connectGoogle }));
+    }
+    if (s.lastError) kids.push(el("span", { class: "badge failed", title: s.lastError, text: "Google error" }));
+    wrap.replaceChildren(...kids);
+  }
+
+  async function connectGoogle() {
+    try {
+      const res = await api("/admin/api/google/connect", { method: "POST", body: {} });
+      window.location = res.url;
+    } catch (ex) { alert(ex.message || "Could not start the Google connection"); }
+  }
+
+  async function disconnectGoogle() {
+    if (!confirm("Disconnect Google? Scheduled syncs and \"Post to Google\" stop until you reconnect. Synced reviews are kept.")) return;
+    try { await api("/admin/api/google/disconnect", { method: "POST", body: {} }); }
+    catch (ex) { alert(ex.message || "Disconnect failed"); }
+    await loadGoogleStatus();
+    renderGooglePanel();
+  }
+
   // ---------- Projects column ----------
   async function loadProjects() {
     const col = $("#projects-col");
@@ -379,6 +423,7 @@
       el("div", { class: "sub", text: "Cross-project posting queue" })));
     let projects;
     try { projects = await api("/admin/api/projects"); } catch { return; }
+    state.projects = projects;
     if (!projects.length) { col.append(el("div", { class: "empty", text: "No projects yet." })); return; }
     for (const p of projects) {
       col.append(el("div",
@@ -599,12 +644,158 @@
       disabled: "", onclick: deleteSelectedReviews,
     });
     col.append(
+      el("div", { class: "card", id: "google-panel" }, el("div", { class: "muted", text: "Loading Google link…" })),
       el("div", { class: "toolbar" },
         el("button", { class: "sm primary", text: "Import reviews", onclick: importReviews }),
         filterSel,
         delBtn),
       el("div", { id: "review-list-wrap" }));
     loadReviews("");
+    renderGooglePanel();
+  }
+
+  // ---------- Per-project Google panel (Reviews section) ----------
+  // Shows the linked Business Profile location, the sync toggle, "Sync now",
+  // and the last sync result. Manual importers stay available as a fallback.
+  async function renderGooglePanel() {
+    const box = $("#google-panel");
+    if (!box || !state.projectId) return;
+    const pid = state.projectId;
+    if (!state.google) await loadGoogleStatus();
+    let view;
+    try { view = await api(`/admin/api/projects/${pid}/google/sync`); }
+    catch (ex) { box.replaceChildren(el("div", { class: "muted", text: "Google: " + (ex.message || "failed to load") })); return; }
+    if (state.projectId !== pid) return;
+    drawGooglePanel(view);
+    if (view.running) pollSync(pid);
+  }
+
+  function syncStatsText(st) {
+    if (!st) return "";
+    return `fetched ${st.fetched || 0} · created ${st.created || 0} · updated ${st.updated || 0} · linked ${st.linked || 0} · skipped ${st.skipped || 0}`;
+  }
+
+  function drawGooglePanel(view) {
+    const box = $("#google-panel");
+    if (!box) return;
+    const g = state.google || {};
+    const ready = g.configured && g.connected;
+    const pid = state.projectId;
+
+    const syncChk = el("input", { type: "checkbox", disabled: view.linked ? null : "",
+      onchange: () => setSyncEnabled(pid, syncChk.checked, syncChk) });
+    syncChk.checked = Boolean(view.syncEnabled);
+
+    const status = view.running ? "running" : view.lastSyncStatus;
+    const statusBadge = { ok: "on", error: "failed", running: "queued" }[status] || "off";
+
+    const kids = [
+      el("h3", {}, "Google Business Profile ",
+        el("span", { class: "badge " + (view.linked ? "on" : "off"), text: view.linked ? "linked" : "not linked" })),
+      el("div", { class: "sub" + (view.linked ? "" : " muted"),
+        text: view.linked ? (view.locationTitle || view.locationName) : "Not linked" }),
+      view.linked ? el("div", { class: "hint", text: `${view.locationName} · ${view.accountName}` }) : null,
+    ];
+    if (!g.configured) kids.push(el("div", { class: "hint", text: "Google integration is not configured on the server." }));
+    else if (!g.connected) kids.push(el("div", { class: "hint", text: "Connect Google (top right) to link a location and sync." }));
+
+    kids.push(el("div", { class: "row-actions", style: "align-items:center" },
+      el("button", { class: "sm", text: view.linked ? "Change location" : "Link location",
+        disabled: ready ? null : "", onclick: () => openLocationPicker(view) }),
+      view.linked ? el("button", { class: "sm danger", text: "Unlink", disabled: view.running ? "" : null,
+        onclick: () => unlinkLocation(pid, view) }) : null,
+      el("label", { style: "display:flex;align-items:center;gap:4px;font-size:12px" }, syncChk, "Scheduled sync"),
+      el("button", { class: "sm primary", text: view.running ? "Syncing…" : "Sync now",
+        disabled: ready && view.linked && !view.running ? null : "", onclick: () => syncNow(pid) })));
+
+    if (view.linked) {
+      kids.push(el("div", { class: "hint" },
+        "Last sync: " + fmtDate(view.lastSyncedAt) + " · ",
+        el("span", { class: "badge " + statusBadge, text: status || "idle" }),
+        view.lastSyncStats ? " " + syncStatsText(view.lastSyncStats) : ""));
+      if (view.lastSyncError) kids.push(el("div", { class: "err-inline", text: "Sync error: " + view.lastSyncError }));
+    }
+    box.replaceChildren(...kids);
+  }
+
+  async function setSyncEnabled(pid, enabled, chk) {
+    try { drawGooglePanel(await api(`/admin/api/projects/${pid}/google`, { method: "PUT", body: { syncEnabled: enabled } })); }
+    catch (ex) { alert(ex.message || "Failed to update sync"); chk.checked = !enabled; }
+  }
+
+  async function unlinkLocation(pid, view) {
+    if (!confirm(`Unlink "${view.locationTitle || view.locationName}" from this project? Synced reviews are kept, but stop syncing and can only be marked posted manually.`)) return;
+    try { drawGooglePanel(await api(`/admin/api/projects/${pid}/google`, { method: "DELETE" })); }
+    catch (ex) { alert(ex.message || "Unlink failed"); }
+  }
+
+  async function syncNow(pid) {
+    try { drawGooglePanel(await api(`/admin/api/projects/${pid}/google/sync`, { method: "POST", body: {} })); }
+    catch (ex) { alert(ex.message || "Sync failed to start"); renderGooglePanel(); return; }
+    pollSync(pid);
+  }
+
+  // Poll every 3s until the background sync finishes, then refresh the list.
+  function pollSync(pid) {
+    clearTimeout(state.syncPoll);
+    const tick = async () => {
+      if (state.projectId !== pid || !$("#google-panel")) return;
+      let view;
+      try { view = await api(`/admin/api/projects/${pid}/google/sync`); } catch { return; }
+      if (state.projectId !== pid) return;
+      drawGooglePanel(view);
+      if (view.running) state.syncPoll = setTimeout(tick, 3000);
+      else refreshReviewList();
+    };
+    state.syncPoll = setTimeout(tick, 3000);
+  }
+
+  // Location picker: every location the connected account manages, flagging
+  // the ones already linked to another project (one location ↔ one project).
+  async function openLocationPicker(view) {
+    const pid = state.projectId;
+    const err = el("div", { class: "err" });
+    const list = el("div", {}, el("div", { class: "empty", text: "Loading locations…" }));
+    const syncChk = el("input", { type: "checkbox" });
+    syncChk.checked = Boolean(view.syncEnabled);
+    const ov = el("div", { class: "overlay", onclick: (e) => e.target === ov && ov.remove() },
+      el("div", { class: "modal" },
+        el("h2", {}, "Link Google location"),
+        el("label", { style: "display:flex;align-items:center;gap:6px;margin-bottom:6px" }, syncChk, "Enable scheduled sync"),
+        el("div", { class: "hint", style: "margin-bottom:10px",
+          text: "The first sync links reviews you already imported by hand (same reviewer, rating and text) instead of duplicating them, and drafts AI replies for new ones." }),
+        list, err,
+        el("div", { class: "actions" }, el("button", { type: "button", text: "Cancel", onclick: () => ov.remove() }))));
+    $("#modal-root").append(ov);
+
+    let rows;
+    try { rows = await api("/admin/api/google/locations"); }
+    catch (ex) { list.replaceChildren(el("div", { class: "empty", text: ex.message || "Failed to load locations." })); return; }
+    if (!rows.length) { list.replaceChildren(el("div", { class: "empty", text: "No locations found for the connected Google account." })); return; }
+
+    const projectName = (id) => (state.projects.find((p) => p._id === id) || {}).name;
+    list.replaceChildren(...rows.map((loc) => {
+      const here = loc.linkedProjectId === pid;
+      const elsewhere = loc.linkedProjectId && !here;
+      return el("div", { class: "tmpl-row" },
+        el("div", { class: "grow" },
+          el("div", { text: loc.title }),
+          el("div", { class: "sub", text: [loc.address, loc.accountDisplayName, loc.locationName].filter(Boolean).join(" · ") })),
+        here ? el("span", { class: "badge on", text: "linked here" }) : null,
+        elsewhere ? el("span", { class: "badge off", text: "linked to " + (loc.linkedProjectName || projectName(loc.linkedProjectId) || "another project") }) : null,
+        el("button", { class: "sm primary", text: here ? "Update" : "Link", disabled: elsewhere ? "" : null,
+          onclick: async () => {
+            err.textContent = "";
+            const body = { accountName: loc.accountName, locationName: loc.locationName,
+              locationTitle: loc.title, syncEnabled: syncChk.checked };
+            if (loc.placeId) body.placeId = loc.placeId;
+            try {
+              const v = await api(`/admin/api/projects/${pid}/google`, { method: "PUT", body });
+              ov.remove();
+              if (state.projectId === pid) drawGooglePanel(v);
+            } catch (ex) { err.textContent = ex.message || "Link failed"; }
+          } }));
+    }));
   }
 
   function reviewFilterValue() {
@@ -631,14 +822,15 @@
       tbody.append(el("tr", { class: "row", onclick: () => showReview(r._id) },
         el("td", { onclick: (e) => e.stopPropagation() }, check),
         el("td", { text: `${r.rating}/5` }),
-        el("td", { text: r.author?.name || "—" }),
+        el("td", {}, r.author?.name || "—", googleBadge(r)),
         el("td", { text: fmtDate(r.reviewedAt) }),
         el("td", { text: snippet(r.text) }),
         el("td", {},
           el("span", { class: badgeFor(r.analysis?.status), title: "analysis", text: r.analysis?.status || "—" }), " ",
           el("span", { class: badgeFor(r.reply?.status), title: "reply", text: r.reply?.status || "—" }), " ",
           el("span", { class: badgeFor(r.approval?.status), title: "approval", text: r.approval?.status || "—" }), " ",
-          el("span", { class: badgeFor(r.publishing?.status), title: "posting", text: r.publishing?.status || "—" }))));
+          el("span", { class: badgeFor(r.publishing?.status), title: "posting", text: r.publishing?.status || "—" }),
+          r.publishing?.error ? [" ", el("span", { class: "badge failed", title: r.publishing.error, text: "post failed" })] : null)));
     }
     const selectAll = el("input", { type: "checkbox", id: "review-select-all", onchange: () => {
       wrap.querySelectorAll("tbody input[type=checkbox]").forEach((c) => { c.checked = selectAll.checked; });
@@ -651,6 +843,13 @@
         el("th", {}, "Review"), el("th", {}, "Status"))),
       tbody));
     updateReviewSelection();
+  }
+
+  // Present only on reviews synced from the Business Profile API (postable via "Post to Google").
+  function googleBadge(r) {
+    return r.google?.reviewName
+      ? [" ", el("span", { class: "badge on", title: "Synced from the Google Business Profile API", text: "Google" })]
+      : null;
   }
 
   function selectedReviewIds() {
@@ -734,7 +933,7 @@
     col.replaceChildren(
       el("div", { class: "toolbar" },
         el("button", { class: "sm danger", text: "Delete", onclick: () => deleteReview(r) })),
-      el("h3", {}, `${r.rating}/5 — ${r.author?.name || "Anonymous"}`),
+      el("h3", {}, `${r.rating}/5 — ${r.author?.name || "Anonymous"}`, googleBadge(r)),
       el("dl", { class: "detail" },
         el("dt", {}, "Rating"), el("dd", { text: `${r.rating}/5` }),
         el("dt", {}, "Reviewer"), el("dd", { text: r.author?.name || "—" }),
@@ -744,7 +943,13 @@
           el("span", { class: "muted", text: r.approval?.approvedBy ? ` by ${r.approval.approvedBy} · ${fmtDate(r.approval.approvedAt)}` : "" })),
         el("dt", {}, "Google posting"), el("dd", {},
           el("span", { class: badgeFor(r.publishing?.status), text: r.publishing?.status || "—" }),
-          el("span", { class: "muted", text: r.publishing?.postedAt ? ` · ${fmtDate(r.publishing.postedAt)}` : "" }))),
+          el("span", { class: "muted", text: r.publishing?.postedAt
+            ? ` · ${r.publishing.method === "google_api" ? "via API" : "manual"} · ${fmtDate(r.publishing.postedAt)}` : "" }),
+          r.publishing?.error
+            ? el("div", { class: "err-inline", text: `Last post failed (${r.publishing.attempts || 1}×): ${r.publishing.error}` })
+            : null),
+        el("dt", {}, "Google link"), el("dd", { text: r.google?.reviewName
+          ? "Synced from the API" : "Not linked to the API (manual posting only)" })),
       el("h4", {}, "Review text"),
       el("pre", { text: r.text || "—" }),
       analysisCard,
@@ -1228,11 +1433,10 @@
         el("td", {}, el("div", { style: "max-width:220px", text: r.text || "" })),
         el("td", {}, el("div", { style: "max-width:260px", text: r.reply?.body || "" })),
         el("td", { text: fmtDate(r.approval?.approvedAt) }),
-        el("td", {}, el("span", { class: badgeFor(r.publishing?.status), text: r.publishing?.status || "—" })),
-        el("td", {},
-          el("button", { class: "sm", text: "Copy reply", onclick: () => copyReply(r.reply?.body || "") }), " ",
-          el("button", { class: "sm primary", text: "Mark posted", onclick: () => markPostedRow(r, global) })));
-      tbody.append(el("tr", {}, ...cells));
+        el("td", {}, el("span", { class: badgeFor(r.publishing?.status), text: r.publishing?.status || "—" })));
+      const tr = el("tr", {}, ...cells);
+      tr.append(approvedActionsCell(r, global, tr, wrap));
+      tbody.append(tr);
     }
     const head = el("tr", {});
     if (global) head.append(el("th", {}, "Client"));
@@ -1240,6 +1444,45 @@
       el("th", {}, "Reviewer"), el("th", {}, "Rating"), el("th", {}, "Review"),
       el("th", {}, "Approved reply"), el("th", {}, "Approved"), el("th", {}, "Posting"), el("th", {}, ""));
     wrap.replaceChildren(el("table", {}, el("thead", {}, head), tbody));
+  }
+
+  // API-linked rows post straight to Google; everything else (HTML/manual
+  // imports, unlinked projects) keeps the copy + mark-posted manual flow.
+  function approvedActionsCell(r, global, tr, wrap) {
+    const errBox = el("div", { class: "err-inline", hidden: r.publishing?.error ? null : "",
+      text: r.publishing?.error ? "Last post failed: " + r.publishing.error : "" });
+    const copyBtn = el("button", { class: "sm", text: "Copy reply", onclick: () => copyReply(r.reply?.body || "") });
+    if (!r.googleLinked) {
+      return el("td", {},
+        copyBtn, " ",
+        el("button", { class: "sm primary", text: "Mark posted (manual)", onclick: () => markPostedRow(r, global) }),
+        el("div", { class: "hint", text: "not linked to Google" }),
+        errBox);
+    }
+    const postBtn = el("button", { class: "sm primary", text: "Post to Google" });
+    postBtn.addEventListener("click", () => postToGoogleRow(r, tr, wrap, postBtn, errBox));
+    return el("td", {},
+      postBtn, " ", copyBtn, " ",
+      el("button", { class: "sm", text: "Mark posted (manual)", onclick: () => markPostedRow(r, global) }),
+      errBox);
+  }
+
+  async function postToGoogleRow(r, tr, wrap, btn, errBox) {
+    const who = (r.author?.name || "this reviewer") + (r.projectName ? ` (${r.projectName})` : "");
+    if (!confirm(`Post this reply to Google for ${who}? It goes live on the Business Profile immediately.`)) return;
+    btn.disabled = true;
+    btn.textContent = "Posting…";
+    errBox.hidden = true;
+    try {
+      await api(`/admin/api/reviews/${r._id}/publish`, { method: "POST", body: {} });
+      tr.remove();
+      if (!wrap.querySelector("tbody tr")) wrap.replaceChildren(el("div", { class: "empty", text: "Nothing awaiting posting." }));
+    } catch (ex) {
+      errBox.textContent = "Post failed: " + (ex.message || "unknown error");
+      errBox.hidden = false;
+      btn.disabled = false;
+      btn.textContent = "Retry post";
+    }
   }
 
   function copyReply(text) {
@@ -1312,7 +1555,7 @@
   async function boot() {
     try { await api("/admin/api/projects"); }
     catch { unlock(false); return; }
-    unlock(true); loadProjects(); checkHealth();
+    unlock(true); loadProjects(); checkHealth(); loadGoogleStatus();
   }
   boot();
 })();
