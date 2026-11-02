@@ -11,6 +11,8 @@ const BOOKME_TEMPLATES = [
   "booking-staff-cancellation",
   "booking-rescheduled",
   "booking-staff-rescheduled",
+  "booking-running-late",
+  "booking-earlier-offer",
 ] as const;
 
 function allTemplates() {
@@ -29,6 +31,14 @@ const bookingCustomer = {
   notes: "**Notes:** Please use the side door.",
   meeting: "**Join online:** [Google Meet](https://meet.google.com/abc-defg-hij)",
   manageUrl: "https://bookme.example/manage/abc.sig",
+};
+
+const earlierOffer = {
+  ...bookingCustomer,
+  offeredWhen: "Monday, Aug 10 2026 at 8:35 AM",
+  acceptUrl: "https://bookme.example/offers/abc.sig/accept",
+  declineUrl: "https://bookme.example/offers/abc.sig/decline",
+  expiresIn: "15 minutes",
 };
 
 const bookingStaff = {
@@ -67,6 +77,8 @@ describe("starter templates", () => {
       "booking-staff-cancellation": bookingStaff,
       "booking-rescheduled": { ...bookingCustomer, previousWhen },
       "booking-staff-rescheduled": { ...bookingStaff, previousWhen },
+      "booking-running-late": { ...bookingCustomer, previousWhen },
+      "booking-earlier-offer": earlierOffer,
     };
 
     const byName = new Map(allTemplates().map((t) => [t.name, t]));
@@ -85,7 +97,12 @@ describe("starter templates", () => {
 
   it("links the Meet call and manage page in customer booking emails", () => {
     const byName = new Map(allTemplates().map((t) => [t.name, t]));
-    for (const name of ["booking-confirmation", "booking-reminder", "booking-rescheduled"]) {
+    for (const name of [
+      "booking-confirmation",
+      "booking-reminder",
+      "booking-rescheduled",
+      "booking-running-late",
+    ]) {
       const def = byName.get(name)!;
       const out = render({ subject: def.subject, format: def.format, body: def.body }, {
         ...bookingCustomer,
@@ -94,5 +111,25 @@ describe("starter templates", () => {
       expect(out.html).toContain('href="https://meet.google.com/abc-defg-hij"');
       expect(out.html).toContain('href="https://bookme.example/manage/abc.sig"');
     }
+  });
+
+  it("shows the old and new time in the running-late email", () => {
+    const def = allTemplates().find((t) => t.name === "booking-running-late")!;
+    const out = render(
+      { subject: def.subject, format: def.format, body: def.body },
+      { ...bookingCustomer, previousWhen: "Monday, Aug 10 2026 at 8:45 AM" },
+    );
+    expect(out.subject).toBe("Running late: your Haircut is now Monday, Aug 10 2026 at 9:00 AM");
+    expect(out.text).toContain("Monday, Aug 10 2026 at 8:45 AM");
+  });
+
+  it("links accept and decline in the earlier-offer email and states the expiry", () => {
+    const def = allTemplates().find((t) => t.name === "booking-earlier-offer")!;
+    const out = render({ subject: def.subject, format: def.format, body: def.body }, earlierOffer);
+    expect(out.subject).toContain("8:35 AM");
+    expect(out.html).toContain('href="https://bookme.example/offers/abc.sig/accept"');
+    expect(out.html).toContain('href="https://bookme.example/offers/abc.sig/decline"');
+    expect(out.text).toContain("expires in 15 minutes");
+    expect(out.text).toContain("Monday, Aug 10 2026 at 9:00 AM");
   });
 });

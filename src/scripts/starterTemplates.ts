@@ -64,7 +64,8 @@ This link expires in {{expiresIn}}. If you didn't request this, no action is nee
 
 // --- Booking emails (calendly-clone / BookMe) ---
 // Customer: customerName, serviceName, staffName, businessName, when, timezone,
-//           duration, notes, meeting, manageUrl, lead, rebookUrl, previousWhen
+//           duration, notes, meeting, manageUrl, lead, rebookUrl, previousWhen,
+//           offeredWhen, acceptUrl, declineUrl, expiresIn
 // Staff/owner: recipientName, customerName, customerEmail, customerPhone,
 //              serviceName, staffName, businessName, when, timezone, duration,
 //              notes, meeting, dashboardUrl, previousWhen
@@ -194,6 +195,44 @@ Hi {{recipientName}}, **{{customerName}}** moved their **{{serviceName}}** at **
 [Open dashboard]({{dashboardUrl}})
 
 Reply to this email to reach the customer directly.`,
+  },
+  {
+    // Staff-initiated postpone ("+15", "+60"). The booking has already moved.
+    name: "booking-running-late",
+    subject: "Running late: your {{serviceName}} is now {{when}}",
+    format: "markdown",
+    body: `# We're running a little late
+
+Hi {{customerName}}, {{staffName}} at **{{businessName}}** is running behind, so your appointment has been moved.
+
+- **Service:** {{serviceName}}
+- **With:** {{staffName}}
+- **New time:** {{when}} ({{timezone}})
+- **Previously:** {{previousWhen}}
+
+{{meeting}}
+
+Sorry for the wait. If the new time doesn't work, [reschedule or cancel]({{manageUrl}}).`,
+  },
+  {
+    // Staff-initiated pre-pone ("now"). The booking only moves if the customer
+    // accepts; `when` is still the current time, `offeredWhen` the earlier slot.
+    name: "booking-earlier-offer",
+    subject: "We can see you earlier: {{serviceName}} at {{offeredWhen}}",
+    format: "markdown",
+    body: `# We can see you earlier
+
+Hi {{customerName}}, a slot has opened up with {{staffName}} at **{{businessName}}**. Would you like to come in earlier?
+
+- **Service:** {{serviceName}}
+- **Earlier time:** {{offeredWhen}} ({{timezone}})
+- **Your current time:** {{when}}
+
+[Accept the earlier time]({{acceptUrl}})
+
+[Keep my time]({{declineUrl}})
+
+This offer expires in {{expiresIn}}. If you do nothing, your appointment stays at {{when}}.`,
   },
 ];
 

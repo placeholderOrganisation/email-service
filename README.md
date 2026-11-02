@@ -94,13 +94,15 @@ Starter templates (`account` · `booking` · `order`):
 | `booking-staff-cancellation` | `recipientName`, `customerName`, `customerEmail`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `dashboardUrl` |
 | `booking-rescheduled` | `customerName`, `serviceName`, `staffName`, `businessName`, `when`, `previousWhen`, `timezone`, `meeting`, `manageUrl` |
 | `booking-staff-rescheduled` | `recipientName`, `customerName`, `customerEmail`, `serviceName`, `staffName`, `businessName`, `when`, `previousWhen`, `timezone`, `meeting`, `dashboardUrl` |
-
-`meeting` is a pre-rendered Markdown line with the Google Meet link, or empty for in-person services.
+| `booking-running-late` | `customerName`, `serviceName`, `staffName`, `businessName`, `when`, `previousWhen`, `timezone`, `meeting`, `manageUrl` |
+| `booking-earlier-offer` | `customerName`, `serviceName`, `staffName`, `businessName`, `when` (current time), `offeredWhen`, `timezone`, `acceptUrl`, `declineUrl`, `expiresIn` |
 | `order-confirmation` | `customerName`, `orderNumber`, `itemsList`, `total`, `shippingAddress` |
 | `receipt` | `customerName`, `orderNumber`, `orderDate`, `itemsList`, `subtotal`, `tax`, `shipping`, `total`, `paymentMethod` |
 | `shipping-update` | `customerName`, `orderNumber`, `carrier`, `trackingNumber`, `trackUrl`, `eta` |
 | `contact-notification` | `name`, `email`, `projectType`, `budget`, `message`, `submittedAt` |
 | `contact-acknowledgment` | `name`, `siteName`, `message` |
+
+`meeting` is a pre-rendered Markdown line with the Google Meet link, or empty for in-person services.
 
 For contact forms, send `contact-notification` with `replyTo` set to the submitter's
 email so you can reply straight to the lead. `POST /v1/send` accepts an optional
