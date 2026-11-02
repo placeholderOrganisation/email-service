@@ -88,7 +88,7 @@ Starter templates (`account` · `booking` · `order`):
 | `verify-email` | `name`, `product`, `verifyUrl`, `expiresIn` |
 | `password-reset` | `name`, `product`, `resetUrl`, `expiresIn` |
 | `booking-confirmation` | `customerName`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `duration`, `notes`, `meeting`, `manageUrl` |
-| `booking-staff-confirmation` | `recipientName`, `customerName`, `customerEmail`, `customerPhone`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `duration`, `notes`, `meeting`, `dashboardUrl` |
+| `booking-staff-confirmation` | `recipientName`, `customerName`, `customerEmail`, `customerPhone`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `duration`, `notes`, `meeting`, `dashboardUrl`, `quickMoves` |
 | `booking-reminder` | `customerName`, `serviceName`, `staffName`, `when`, `timezone`, `lead`, `meeting`, `manageUrl` |
 | `booking-cancellation` | `customerName`, `serviceName`, `businessName`, `when`, `timezone`, `rebookUrl` |
 | `booking-staff-cancellation` | `recipientName`, `customerName`, `customerEmail`, `serviceName`, `staffName`, `businessName`, `when`, `timezone`, `dashboardUrl` |

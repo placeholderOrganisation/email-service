@@ -68,9 +68,11 @@ This link expires in {{expiresIn}}. If you didn't request this, no action is nee
 //           offeredWhen, acceptUrl, declineUrl, expiresIn
 // Staff/owner: recipientName, customerName, customerEmail, customerPhone,
 //              serviceName, staffName, businessName, when, timezone, duration,
-//              notes, meeting, dashboardUrl, previousWhen
+//              notes, meeting, dashboardUrl, previousWhen, quickMoves
 // `meeting` is a pre-rendered Markdown line ("**Join online:** [Google Meet](…)")
 // or "" for in-person services.
+// `quickMoves` is pre-rendered Markdown (signed postpone links, or grey text
+// plus a reason). Missing/empty renders as nothing.
 const booking: TemplateDef[] = [
   {
     name: "booking-confirmation",
@@ -111,6 +113,8 @@ Hi {{recipientName}}, **{{customerName}}** just booked **{{serviceName}}** at **
 {{meeting}}
 
 {{notes}}
+
+{{quickMoves}}
 
 [Open dashboard]({{dashboardUrl}})
 
