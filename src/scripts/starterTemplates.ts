@@ -238,6 +238,23 @@ Hi {{customerName}}, a slot has opened up with {{staffName}} at **{{businessName
 
 This offer expires in {{expiresIn}}. If you do nothing, your appointment stays at {{when}}.`,
   },
+  {
+    // Staff notice when a customer declines or an offer expires. Accept already
+    // notifies staff via booking-staff-rescheduled.
+    name: "booking-staff-offer-result",
+    subject: "Earlier-time offer {{result}}: {{customerName}}",
+    format: "markdown",
+    body: `# Earlier-time offer {{result}}
+
+Hi {{recipientName}}, {{resultLine}}
+
+- **Service:** {{serviceName}}
+- **Customer:** {{customerName}}
+- **Offered time:** {{offeredWhen}}
+- **Booked time:** {{when}} ({{timezone}})
+
+[Open dashboard]({{dashboardUrl}})`,
+  },
 ];
 
 // --- Order / shop emails (gta-farm-market) ---

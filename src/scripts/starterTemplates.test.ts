@@ -13,6 +13,7 @@ const BOOKME_TEMPLATES = [
   "booking-staff-rescheduled",
   "booking-running-late",
   "booking-earlier-offer",
+  "booking-staff-offer-result",
 ] as const;
 
 function allTemplates() {
@@ -81,6 +82,12 @@ describe("starter templates", () => {
       "booking-staff-rescheduled": { ...bookingStaff, previousWhen },
       "booking-running-late": { ...bookingCustomer, previousWhen },
       "booking-earlier-offer": earlierOffer,
+      "booking-staff-offer-result": {
+        ...bookingStaff,
+        offeredWhen: earlierOffer.offeredWhen,
+        result: "declined",
+        resultLine: "Ada kept the original time.",
+      },
     };
 
     const byName = new Map(allTemplates().map((t) => [t.name, t]));
