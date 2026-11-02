@@ -46,6 +46,8 @@ const bookingStaff = {
   recipientName: "Jordan",
   customerPhone: "555-0100",
   dashboardUrl: "https://bookme.example/dashboard",
+  quickMoves:
+    "**Running late?**\n\n- [+15 min → 9:15 AM](https://bookme.example/quick-move/abc.15.sig)\n- <span style=\"color:#9ca3af\">+60 min — Next customer (Ben) at 2:30 PM</span>",
 };
 
 describe("starter templates", () => {
@@ -121,6 +123,14 @@ describe("starter templates", () => {
     );
     expect(out.subject).toBe("Running late: your Haircut is now Monday, Aug 10 2026 at 9:00 AM");
     expect(out.text).toContain("Monday, Aug 10 2026 at 8:45 AM");
+  });
+
+  it("renders signed quick-move links and greys unavailable offsets in the staff confirmation", () => {
+    const def = allTemplates().find((t) => t.name === "booking-staff-confirmation")!;
+    const out = render({ subject: def.subject, format: def.format, body: def.body }, bookingStaff);
+    expect(out.html).toContain('href="https://bookme.example/quick-move/abc.15.sig"');
+    expect(out.html).toContain("Next customer (Ben) at 2:30 PM");
+    expect(out.html).not.toMatch(/\{\{/);
   });
 
   it("links accept and decline in the earlier-offer email and states the expiry", () => {
