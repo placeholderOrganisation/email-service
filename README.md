@@ -96,6 +96,7 @@ Starter templates (`account` · `booking` · `order`):
 | `booking-staff-rescheduled` | `recipientName`, `customerName`, `customerEmail`, `serviceName`, `staffName`, `businessName`, `when`, `previousWhen`, `timezone`, `meeting`, `dashboardUrl` |
 | `booking-running-late` | `customerName`, `serviceName`, `staffName`, `businessName`, `when`, `previousWhen`, `timezone`, `meeting`, `manageUrl` |
 | `booking-earlier-offer` | `customerName`, `serviceName`, `staffName`, `businessName`, `when` (current time), `offeredWhen`, `timezone`, `acceptUrl`, `declineUrl`, `expiresIn` |
+| `booking-staff-offer-result` | `recipientName`, `customerName`, `serviceName`, `businessName`, `when`, `offeredWhen`, `timezone`, `result`, `resultLine`, `dashboardUrl` |
 | `order-confirmation` | `customerName`, `orderNumber`, `itemsList`, `total`, `shippingAddress` |
 | `receipt` | `customerName`, `orderNumber`, `orderDate`, `itemsList`, `subtotal`, `tax`, `shipping`, `total`, `paymentMethod` |
 | `shipping-update` | `customerName`, `orderNumber`, `carrier`, `trackingNumber`, `trackUrl`, `eta` |
